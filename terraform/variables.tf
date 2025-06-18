@@ -16,5 +16,5 @@ variable "oidc_provider" {
 }
 
 variable "repository" {
-  default = "repo:IharTsykala/rsschool-devops-course-tasks-2025q2:ref:refs/heads/main"
+  default = "repo:IharTsykala/rsschool-devops-course-tasks-2025q2:ref:refs/heads/*"
 }
