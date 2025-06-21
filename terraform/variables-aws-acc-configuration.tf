@@ -1,39 +1,20 @@
 variable "region" {
+  type    = string
   default = "us-east-1"
 }
 
 variable "bucket_name" {
-  default = "terraform-states-ihar-tsykala"
+  default = "terraform-states-ihar-tsykala-2025q2"
 }
 
 variable "role_name" {
-  default = "GithubActionsRole"variable "region" {
-    type    = string
-    default = "us-east-1"
-  }
-
-  variable "bucket_name" {
-    default = "terraform-states-ihar-tsykala-2025q2"
-  }
-
-  variable "role_name" {
-    default = "GithubActionsRole"
-  }
-
-  variable "oidc_provider" {
-    default = "arn:aws:iam::141706873519:oidc-provider/token.actions.githubusercontent.com"
-  }
-
-  variable "repository" {
-    default = "repo:IharTsykala/rsschool-devops-course-tasks-2025q2:*"
-  }
-
+  default = "GithubActionsRole"
 }
 
 variable "oidc_provider" {
-  default = "arn:aws:iam::851725512813:oidc-provider/token.actions.githubusercontent.com"
+  default = "arn:aws:iam::141706873519:oidc-provider/token.actions.githubusercontent.com"
 }
 
 variable "repository" {
-  default = "repo:ihartsykala/rsschool-devops-course-tasks:*"
+  default = "repo:IharTsykala/rsschool-devops-course-tasks-2025q2:*"
 }

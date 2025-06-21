@@ -25,12 +25,12 @@ variable "private_subnet_2_cidr" {
 
 variable "az_1" {
   description = "First availability zone"
-  default     = "eu-central-1a"
+  default     = "us-east-1"
 }
 
 variable "az_2" {
   description = "Second availability zone"
-  default     = "eu-central-1b"
+  default     = "us-east-1"
 }
 
 variable "bastion_ami" {
