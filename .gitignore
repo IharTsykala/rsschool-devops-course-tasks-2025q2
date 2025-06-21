@@ -1,0 +1,8 @@
+.idea/
+
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+.DS_Store
+terraform/backend-setup/.terraform/
+terraform/backend-setup/.terraform.lock.hcl
+terraform/backend-setup/terraform.tfstate

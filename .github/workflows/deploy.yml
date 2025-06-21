@@ -1,0 +1,76 @@
+name: Terraform Deployment
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  terraform-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.9.5
+      - name: Format Code
+        run: terraform fmt -check
+        working-directory: terraform
+
+
+  terraform-plan:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.9.5
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+#          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+#          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: arn:aws:iam::141706873519:role/GithubActionsRole
+          aws-region: us-east-1
+      - name: Terraform Init
+        run: terraform init
+        working-directory: terraform
+      - name: Terraform Plan
+        run: terraform plan
+        working-directory: terraform
+
+  terraform-apply:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+#    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.9.5
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+#          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+#          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: arn:aws:iam::141706873519:role/GithubActionsRole
+          aws-region: us-east-1
+      - name: Ensure backend bucket exists
+        run: |
+          aws s3api head-bucket --bucket terraform-states-ihar-tsykala-2025q2 || \
+          aws s3api create-bucket --bucket terraform-states-ihar-tsykala-2025q2 --region us-east-1
+        shell: bash
+      - name: Terraform Init
+        run: terraform init
+        working-directory: terraform
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
+        working-directory: terraform
