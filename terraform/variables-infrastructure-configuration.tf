@@ -33,10 +33,6 @@ variable "az_2" {
   default     = "us-east-1b"
 }
 
-variable "bastion_ami" {
-  default = "ami-0df0e7600ad0913a9"
-}
-
 variable "bastion_instance_type" {
   default = "t3.micro"
 }
