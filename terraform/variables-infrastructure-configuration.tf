@@ -34,5 +34,5 @@ variable "az_2" {
 }
 
 variable "bastion_instance_type" {
-  default = "t3.micro"
+  default = "t2.micro"
 }
