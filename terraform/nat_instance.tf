@@ -1,5 +1,5 @@
 resource "aws_instance" "nat_instance" {
-  ami           = "ami-0df0e7600ad0913a9"
+  ami           = data.aws_ami.amazon_linux_2.id
   instance_type = "t3.micro"
   #  subnet_id     = aws_subnet.public_subnet_1.id
 
