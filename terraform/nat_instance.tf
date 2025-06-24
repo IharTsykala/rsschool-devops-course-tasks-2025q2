@@ -7,10 +7,23 @@ resource "aws_instance" "nat_instance" {
     device_index         = 0
   }
 
+  # user_data = <<-EOF
+  #   #!/bin/bash
+  #   echo 1 > /proc/sys/net/ipv4/ip_forward
+  #   iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+  # EOF
+
   user_data = <<-EOF
     #!/bin/bash
-    echo 1 > /proc/sys/net/ipv4/ip_forward
+    echo "Enabling IP forwarding"
+    echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
+    sysctl -p
+
+    echo "Setting up iptables"
+    yum install -y iptables-services
     iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+    service iptables save
+    systemctl enable iptables
   EOF
 
   tags = {

@@ -8,8 +8,9 @@ resource "aws_eip_association" "nat_eip_assoc" {
 }
 
 resource "aws_network_interface" "nat_eni" {
-  subnet_id       = aws_subnet.public_subnet_1.id
-  security_groups = [aws_security_group.security_group_public_from_nat.id]
+  subnet_id         = aws_subnet.public_subnet_1.id
+  security_groups   = [aws_security_group.security_group_public_from_nat.id]
+  source_dest_check = false
 
   tags = {
     Name = "nat-eni"

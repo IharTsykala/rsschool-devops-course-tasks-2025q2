@@ -33,13 +33,24 @@ resource "aws_network_acl_rule" "all_outbound_private" {
   egress         = true
 }
 
-resource "aws_network_acl_rule" "return_traffic_inbound_private" {
+# resource "aws_network_acl_rule" "return_traffic_inbound_private" {
+#   network_acl_id = aws_network_acl.network_acls_private.id
+#   rule_number    = 150
+#   protocol       = "-1"
+#   rule_action    = "allow"
+#   cidr_block     = "0.0.0.0/0"
+#   from_port      = 0
+#   to_port        = 0
+#   egress         = false
+# }
+
+resource "aws_network_acl_rule" "allow_return_from_nat" {
   network_acl_id = aws_network_acl.network_acls_private.id
-  rule_number    = 150
+  rule_number    = 110
   protocol       = "-1"
-  rule_action    = "allow"
-  cidr_block     = "0.0.0.0/0"
+  cidr_block     = "10.0.1.0/24"
   from_port      = 0
   to_port        = 0
   egress         = false
+  rule_action    = "allow"
 }

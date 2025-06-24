@@ -35,7 +35,7 @@ resource "aws_network_acl_rule" "http_inbound" {
 
 resource "aws_network_acl_rule" "all_outbound" {
   network_acl_id = aws_network_acl.network_acls_public.id
-  rule_number    = 100
+  rule_number    = 200
   protocol       = "-1"
   rule_action    = "allow"
   cidr_block     = "0.0.0.0/0"
