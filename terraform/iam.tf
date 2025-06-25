@@ -1,25 +1,3 @@
-# resource "aws_iam_role" "GithubActionsRole" {
-#   name = var.role_name
-#
-#   assume_role_policy = <<EOF
-# {
-#   "Version": "2012-10-17",
-#   "Statement": [{
-#     "Effect": "Allow",
-#     "Principal": {
-#       "Federated": "${var.oidc_provider}"
-#     },
-#     "Action": "sts:AssumeRoleWithWebIdentity",
-#     "Condition": {
-#       "StringEquals": {
-#         "token.actions.githubusercontent.com:sub": "${var.repository}"
-#       }
-#     }
-#   }]
-# }
-# EOF
-# }
-
 resource "aws_iam_openid_connect_provider" "github" {
   url             = "https://token.actions.githubusercontent.com"
   client_id_list  = ["sts.amazonaws.com"]
