@@ -36,3 +36,10 @@ variable "az_2" {
 variable "bastion_instance_type" {
   default = "t2.micro"
 }
+
+variable "k3s_instance_type" {
+  default = "t2.micro"
+}
+variable "worker_count"      {
+  default = 1
+}
