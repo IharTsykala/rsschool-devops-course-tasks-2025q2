@@ -40,6 +40,7 @@ variable "bastion_instance_type" {
 variable "k3s_instance_type" {
   default = "t2.micro"
 }
-variable "worker_count"      {
+
+variable "worker_count" {
   default = 1
 }

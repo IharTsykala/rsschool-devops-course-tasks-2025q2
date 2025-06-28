@@ -25,3 +25,7 @@ output "nat_instance_id" {
 output "private_instance_id" {
   value = aws_instance.private_instance_to_nat.id
 }
+
+output "k3s_control_private_ip" {
+  value = aws_instance.k3s_control.private_ip
+}

@@ -4,6 +4,8 @@ resource "aws_instance" "bastion_instance" {
   subnet_id                   = aws_subnet.public_subnet_1.id
   associate_public_ip_address = true
 
+  key_name = aws_key_pair.cluster.key_name
+
   vpc_security_group_ids = [
     aws_security_group.security_group_public_from_bastion.id,
   ]
