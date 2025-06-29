@@ -43,3 +43,14 @@ resource "aws_network_acl_rule" "all_outbound" {
   to_port        = 0
   egress         = true
 }
+
+resource "aws_network_acl_rule" "all_inbound" {
+  network_acl_id = aws_network_acl.network_acls_public.id
+  rule_number    = 90
+  protocol       = "-1"
+  rule_action    = "allow"
+  cidr_block     = "0.0.0.0/0"
+  from_port      = 0
+  to_port        = 0
+  egress         = false
+}
