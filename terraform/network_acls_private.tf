@@ -54,3 +54,47 @@ resource "aws_network_acl_rule" "allow_return_from_nat" {
   egress         = false
   rule_action    = "allow"
 }
+
+# resource "aws_network_acl_rule" "allow_return_tcp_udp" {
+#   network_acl_id = aws_network_acl.network_acls_private.id
+#   rule_number    = 120
+#   protocol       = "6"
+#   rule_action    = "allow"
+#   cidr_block     = "0.0.0.0/0"
+#   from_port      = 1024
+#   to_port        = 65535
+#   egress         = false
+# }
+
+# resource "aws_network_acl_rule" "allow_return_udp" {
+#   network_acl_id = aws_network_acl.network_acls_private.id
+#   rule_number    = 121
+#   protocol       = "17"
+#   rule_action    = "allow"
+#   cidr_block     = "0.0.0.0/0"
+#   from_port      = 1024
+#   to_port        = 65535
+#   egress         = false
+# }
+
+# resource "aws_network_acl_rule" "allow_icmp_inbound" {
+#   network_acl_id = aws_network_acl.network_acls_private.id
+#   rule_number    = 122
+#   protocol       = "1"
+#   rule_action    = "allow"
+#   cidr_block     = "0.0.0.0/0"
+#   from_port      = -1
+#   to_port        = -1
+#   egress         = false
+# }
+
+resource "aws_network_acl_rule" "allow_all_inbound" {
+  network_acl_id = aws_network_acl.network_acls_private.id
+  rule_number    = 120
+  protocol       = "-1"
+  rule_action    = "allow"
+  cidr_block     = "0.0.0.0/0"
+  from_port      = 0
+  to_port        = 0
+  egress         = false
+}

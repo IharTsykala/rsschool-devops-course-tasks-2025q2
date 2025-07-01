@@ -6,3 +6,4 @@ terraform/.terraform.lock.hcl
 terraform/backend-setup/.terraform/
 terraform/backend-setup/.terraform.lock.hcl
 terraform/backend-setup/terraform.tfstate
+terraform/cluster_key.pem

@@ -25,3 +25,21 @@ output "nat_instance_id" {
 output "private_instance_id" {
   value = aws_instance.private_instance_to_nat.id
 }
+
+output "k3s_control_private_ip" {
+  value = aws_instance.k3s_control.private_ip
+}
+
+output "nat_public_ip" {
+  value = aws_instance.nat_instance.public_ip
+}
+
+output "k3s_worker_private_ips" {
+  description = "Private IPs of k3s worker nodes"
+  value       = [for instance in aws_instance.k3s_worker : instance.private_ip]
+}
+
+output "k3s_worker_instance_ids" {
+  description = "Instance IDs of k3s worker nodes"
+  value       = [for instance in aws_instance.k3s_worker : instance.id]
+}
