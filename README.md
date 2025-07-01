@@ -213,13 +213,19 @@ Due to private networking constraints, some manual steps are needed to access an
 ssh -i cluster_key.pem ec2-user@<BASTION_PUBLIC_IP>
 ```
 
-### 2. SSH into control plane from Bastion
+### 2. Copy SSH key to Bastion
+
+```bash
+scp -i cluster_key.pem cluster_key.pem ec2-user@<BASTION_PUBLIC_IP>:~
+```
+
+### 3. SSH into control plane from Bastion
 
 ```bash
 ssh -i cluster_key.pem ec2-user@<CONTROL_PLANE_PRIVATE_IP>
 ```
 
-### 3. Retrieve kubeconfig
+### 4. Retrieve kubeconfig
 
 ```bash
 sudo cat /etc/rancher/k3s/k3s.yaml
@@ -233,7 +239,7 @@ server: https://127.0.0.1:6443
 
 Save it as `~/k3s.yaml`
 
-### 4. Port forwarding
+### 5. Port forwarding
 
 From your **local machine**, run:
 
@@ -243,7 +249,7 @@ ssh -i cluster_key.pem -L 6443:<CONTROL_PLANE_PRIVATE_IP>:6443 ec2-user@<BASTION
 
 This forwards local port `6443` to the Kubernetes API server.
 
-### 5. Test access
+### 6. Test access
 
 ```bash
 KUBECONFIG=~/k3s.yaml kubectl get nodes
@@ -259,4 +265,3 @@ You should see control plane and worker nodes in `Ready` state.
 - Cluster is deployed across private subnets
 - Access is restricted to local via Bastion SSH forwarding
 - Demonstrates real-world secure Kubernetes access pattern
-
