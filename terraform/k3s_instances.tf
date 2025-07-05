@@ -25,11 +25,5 @@ resource "aws_instance" "k3s_worker" {
 
   depends_on = [aws_instance.k3s_control]
 
-  #   user_data = <<-EOF
-  # #!/bin/bash
-  # CONTROL_IP=${aws_instance.k3s_control.private_ip}
-  # TOKEN=$(sudo cat /var/lib/rancher/k3s/server/node-token)
-  # curl -sfL https://get.k3s.io | K3S_URL=https://$CONTROL_IP:6443 K3S_TOKEN=$TOKEN sh -
-  # EOF
   tags = { Name = "k3s-worker-${count.index + 1}" }
 }

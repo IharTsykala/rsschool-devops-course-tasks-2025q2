@@ -1,0 +1,12 @@
+controller:
+  JCasC:
+    enabled: true
+    configScripts:
+      hello-job: |
+        jobs:
+          - script: >
+              job('hello-world-job') {
+                steps {
+                  shell('echo "Hello world"')
+                }
+              }
