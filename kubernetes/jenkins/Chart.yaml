@@ -1,0 +1,10 @@
+apiVersion: v2
+name: my-jenkins
+description: A wrapper chart to deploy Jenkins with custom values
+type: application
+version: 0.1.0
+
+dependencies:
+  - name: jenkins
+    version: "4.3.15"
+    repository: https://charts.jenkins.io

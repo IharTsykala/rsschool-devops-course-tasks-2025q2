@@ -265,3 +265,185 @@ You should see control plane and worker nodes in `Ready` state.
 - Cluster is deployed across private subnets
 - Access is restricted to local via Bastion SSH forwarding
 - Demonstrates real-world secure Kubernetes access pattern
+
+# Task 4: Jenkins Installation & Configuration**
+
+> **Variant:** local lab on **Minikube** (0 $ cloud cost)
+
+---
+
+## 🌟 Goal
+Deploy Jenkins on a local Minikube cluster with persistent storage, configure it with Helm + JCasC, prove the configuration survives pod restarts and show a *Hello world* job.
+
+---
+
+## 📂 Project Structure
+
+```
+kubernetes/
+└─ jenkins/
+   ├─ Chart.yaml          # wrapper‑chart pulling the official Jenkins chart
+   ├─ Chart.lock          # dependency lock
+   ├─ values.yaml         # our overrides + JCasC snippet
+terraform/                # left from previous tasks
+kubernetes/pvc-test.yaml  # tiny PVC demo (PV/PVC requirement)
+```
+
+---
+
+## 0. Prerequisites
+
+```bash
+brew install helm minikube kubernetes-cli   # macOS via Homebrew
+minikube start                              # driver=docker (Docker Desktop must be running)
+```
+
+---
+
+## 1. Helm Installation & Verification (10 pts)
+
+```bash
+helm version --short
+minikube version
+kubectl version --client
+kubectl get nodes
+
+# Smoke‑test NGINX
+kubectl create ns helm-test
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm repo update
+helm install nginx-test bitnami/nginx -n helm-test
+kubectl get pods,svc -n helm-test
+
+kubectl port-forward svc/nginx-test 8080:80 -n helm-test
+# open http://localhost:8080   -> “Welcome to nginx!”
+
+helm uninstall nginx-test -n helm-test
+kubectl delete ns helm-test
+```
+
+✅ Helm can deploy & remove charts.
+
+---
+
+## 2. Cluster Requirements – PV/PVC (10 pts)
+
+Minikube ships with the `standard` hostPath StorageClass.
+
+```bash
+kubectl get storageclass
+
+kubectl apply -f kubernetes/pvc-test.yaml
+kubectl get pvc pvc-test
+kubectl delete pvc pvc-test
+```
+
+Persistent storage working.
+
+---
+
+## 3. Jenkins Installation (40 pts)
+
+### 3.1 Wrapper‑chart (`kubernetes/jenkins/Chart.yaml`)
+
+```yaml
+apiVersion: v2
+name: my-jenkins
+version: 0.1.0
+dependencies:
+  - name: jenkins
+    version: 4.3.15
+    repository: https://charts.jenkins.io
+```
+
+### 3.2 Custom `values.yaml` (excerpt)
+
+```yaml
+controller:
+  persistence:
+    enabled: true
+    size: 8Gi
+  JCasC:
+    enabled: true
+    configScripts:
+      hello-job: |
+        jobs:
+          - script: >
+              job('hello-world-job') {
+                steps {
+                  shell('echo "Hello world"')
+                }
+              }
+```
+
+### 3.3 Deploy
+
+```bash
+helm dependency update kubernetes/jenkins
+helm upgrade --install my-jenkins kubernetes/jenkins   --namespace jenkins --create-namespace
+kubectl get pods -n jenkins        # jenkins-0 -> Running
+```
+
+### 3.4 Access Jenkins
+
+```bash
+kubectl port-forward svc/jenkins 8080:8080 -n jenkins
+kubectl exec -n jenkins -it svc/jenkins -c jenkins   -- cat /run/secrets/additional/chart-admin-password
+# login → http://localhost:8080  (user: admin)
+```
+
+---
+
+## 4. Jenkins Configuration Persistency (10 pts)
+
+1. Edit *System Message* (“Jenkins setup by …”).
+2. Delete controller pod:
+
+   ```bash
+   kubectl delete pod -l app.kubernetes.io/component=jenkins-controller -n jenkins
+   ```
+3. New pod starts ⇒ message **persists** (stored on the PV).
+
+---
+
+## 5. Verification – *Hello world* Job (15 pts)
+
+* `hello-world-job` appears automatically (JCasC).
+* Run job → **Console Output**
+
+  ```
+  + echo "Hello world"
+  Hello world
+  Finished: SUCCESS
+  ```
+
+---
+
+## 6. Additional Tasks (💫 15 pts)
+
+- **GitHub Actions pipeline** – *not required for the Minikube scenario; course video states these 5 pts are granted automatically*
+- **Authentication & Security** – built-in Jenkins user database, self-sign-up and anonymous access disabled, inbound agent port fixed to **50000**
+- **JCasC job definition** – the `hello-job` pipeline is declared in `kubernetes/jenkins/values.yaml` 
+
+---
+
+## 7. Full Cluster Snapshot
+
+```bash
+kubectl get all --all-namespaces
+```
+
+*(screenshot attached in PR)*
+
+---
+
+## 8. Re‑deployment Quick Guide
+
+```bash
+minikube start
+helm dependency update kubernetes/jenkins
+helm upgrade --install my-jenkins kubernetes/jenkins   --namespace jenkins --create-namespace
+kubectl port-forward svc/jenkins 8080:8080 -n jenkins
+```
+
+🎉 Jenkins up & running locally with persistent config and auto‑provisioned *Hello world* job!
