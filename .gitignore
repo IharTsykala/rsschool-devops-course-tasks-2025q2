@@ -10,4 +10,5 @@ terraform/cluster_key.pem
 
 kubernetes/jenkins/charts
 
-app/node_modules
+app/node_modules/
+kubernetes/**/charts/
