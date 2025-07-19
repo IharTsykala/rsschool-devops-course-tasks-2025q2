@@ -447,3 +447,117 @@ kubectl port-forward svc/jenkins 8080:8080 -n jenkins
 ```
 
 🎉 Jenkins up & running locally with persistent config and auto‑provisioned *Hello world* job!
+
+# Task 5: Helm Chart Deployment on Minikube
+
+## 📦 Project Structure
+
+```
+.
+├── app/                         # Node.js application
+│   ├── index.js
+│   ├── Dockerfile              # Dockerfile for the app
+│   ├── package.json
+│   └── ...
+├── kubernetes/
+│   ├── jenkins/                # From previous task
+│   └── node-app/               # Helm chart for the app
+│       ├── Chart.yaml
+│       ├── values.yaml
+│       ├── pvc-test.yaml
+│       └── templates/
+│           ├── deployment.yaml
+│           ├── service.yaml
+│           └── ingress.yaml
+├── terraform/                  # From previous tasks
+```
+
+---
+
+## 🔹 Steps Performed
+
+### 1. Created a Node.js Application
+
+A simple Express server (`index.js`) that returns “Hello, World from Node.js!”.
+
+### 2. Built and Pushed Docker Image to Docker Hub
+
+```bash
+cd app
+docker build -t ihartsykala/node-hello:1.0 .
+docker push ihartsykala/node-hello:1.0
+```
+
+> Make sure Docker is running and you're logged in (`docker login`).
+
+---
+
+### 3. Created Helm Chart for the App
+
+```bash
+cd kubernetes
+helm create node-app
+```
+
+Modified `values.yaml` to use Docker image:
+
+```yaml
+image:
+  repository: ihartsykala/node-hello
+  tag: "1.0"
+```
+
+---
+
+### 4. Started Local Minikube Cluster
+
+```bash
+minikube start
+minikube status
+```
+
+> You can verify `kubectl` is configured correctly by running:
+
+```bash
+kubectl get nodes
+```
+
+---
+
+### 5. Deployed Helm Chart to Minikube
+
+```bash
+cd kubernetes/node-app
+helm upgrade --install node-app . \
+  -n node-app --create-namespace
+```
+
+---
+
+### 6. Verified Application is Running
+
+Expose the service via Minikube:
+
+```bash
+minikube service node-app -n node-app --url
+```
+
+You should see output like:
+
+```
+http://127.0.0.1:62648
+```
+
+Visit this URL in your browser — it should show:
+
+```
+Hello, World from Node.js!
+```
+
+---
+
+## ✅ What This Solves
+
+- Helm chart is created and used to deploy a Dockerized Node.js app
+- Application is verified to be working in a local Kubernetes cluster
+- Fully satisfies Task 5 requirements (Helm, Docker, K8s, Minikube)
