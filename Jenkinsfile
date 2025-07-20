@@ -163,7 +163,37 @@ spec:
   }
 
   post {
-    success { echo '✅ Pipeline passed' }
-    failure { echo '❌ Pipeline failed' }
+    success {
+      echo '✅ Pipeline passed'
+      container('docker') {
+        withCredentials([
+          string(credentialsId: 'TELEGRAM_TOKEN', variable: 'TG_TOKEN'),
+          string(credentialsId: 'TELEGRAM_CHAT_ID', variable: 'TG_CHAT')
+        ]) {
+          sh """
+            curl -s -X POST https://api.telegram.org/bot$TG_TOKEN/sendMessage \\
+              -d chat_id=$TG_CHAT \\
+              -d text="✅ Jenkins pipeline succeeded: Job '$JOB_NAME' #$BUILD_NUMBER"
+          """
+        }
+      }
+    }
+
+    failure {
+      echo '❌ Pipeline failed'
+      container('docker') {
+        withCredentials([
+          string(credentialsId: 'TELEGRAM_TOKEN', variable: 'TG_TOKEN'),
+          string(credentialsId: 'TELEGRAM_CHAT_ID', variable: 'TG_CHAT')
+        ]) {
+          sh """
+            curl -s -X POST https://api.telegram.org/bot$TG_TOKEN/sendMessage \\
+              -d chat_id=$TG_CHAT \\
+              -d text="❌ Jenkins pipeline failed: Job '$JOB_NAME' #$BUILD_NUMBER"
+          """
+        }
+      }
+    }
   }
+
 }
