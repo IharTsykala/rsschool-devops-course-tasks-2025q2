@@ -97,6 +97,28 @@ spec:
         }
       }
     }
+
+    stage('Push Docker Image to Docker Hub') {
+      when {
+        beforeAgent true
+        triggeredBy 'UserIdCause'
+      }
+      steps {
+        container('docker') {
+          dir('app') {
+            withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+              sh '''
+                echo "📦 Logging into Docker Hub..."
+                echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
+                echo "📤 Pushing Docker image to Docker Hub..."
+                docker push $IMAGE
+                echo "✅ Docker image pushed: $IMAGE"
+              '''
+            }
+          }
+        }
+      }
+    }
   }
 
   post {
