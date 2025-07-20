@@ -39,6 +39,17 @@ spec:
         }
       }
     }
+
+    stage('Test') {
+      steps {
+        echo '⚠️ Entered test stage'
+        container('node') {
+          dir('app') {
+            sh 'node --experimental-vm-modules node_modules/.bin/jest'
+          }
+        }
+      }
+    }
   }
 
   post {
