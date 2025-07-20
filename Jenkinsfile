@@ -140,6 +140,26 @@ spec:
           }
         }
 
+       stage('Verify Application') {
+         steps {
+           container('docker') {
+             sh '''
+               echo "🔍 Verifying application..."
+               RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://node-hello-node-app.jenkins.svc.cluster.local)
+               if [ "$RESPONSE" -ne 200 ]; then
+                 echo "❌ Verification failed. Status code: $RESPONSE"
+                 echo "📋 Pods:"
+                 kubectl get pods -n jenkins || true
+                 echo "📋 Logs:"
+                 kubectl logs -n jenkins -l app=node-hello-node-app --tail=100 || true
+                 exit 1
+               fi
+               echo "✅ Application verification passed with status $RESPONSE"
+             '''
+           }
+         }
+       }
+
   }
 
   post {
