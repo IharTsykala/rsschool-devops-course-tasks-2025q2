@@ -561,3 +561,210 @@ Hello, World from Node.js!
 - Helm chart is created and used to deploy a Dockerized Node.js app
 - Application is verified to be working in a local Kubernetes cluster
 - Fully satisfies Task 5 requirements (Helm, Docker, K8s, Minikube)
+
+
+# Task 6 – Application Deployment via Jenkins Pipeline (Local **Minikube** lab)
+
+This guide combines the **lab bootstrap** (Jenkins + SonarQube on Minikube) with the **production‑ready Jenkinsfile** that builds, verifies and deploys the sample Node.js application, pushes an image to Docker Hub and sends **Telegram** notifications on every run.
+
+> Tested on **macOS 14 + Docker Desktop 4.29 + Minikube v1.36**  
+> (Linux/Windows commands are identical except for the package manager)
+
+---
+
+## 0. Repository Layout
+
+```
+.
+├── app/                        # Node.js application
+│   ├── index.js
+│   ├── __tests__/index.test.js
+│   ├── Dockerfile              # Runtime image (slim)
+│   └── docker/Dockerfile.ci    # CI image with dev dependencies
+├── kubernetes/
+│   ├── jenkins/                # Wrapper‑chart for Jenkins (Task 4)
+│   └── node-app/               # Helm chart used by the pipeline
+├── terraform/                  # AWS IaC (Tasks 1‑3)
+├── Jenkinsfile                 # 💡 Pipeline described below
+└── README.md                   # Task docs
+```
+
+*`Dockerfile.ci`* was added specifically for the **Build / Unit‑test / Sonar** stages to keep the runtime image small.
+
+---
+
+## 1. Prerequisites
+
+```bash
+brew install docker minikube kubernetes-cli helm   # macOS
+open -a "Docker"                                   # start Docker Desktop
+docker --version && minikube version
+kubectl version --client && helm version --short
+```
+
+---
+
+## 2. Start a Clean Minikube Cluster
+
+```bash
+minikube start --memory 6000 --cpus 4
+minikube status
+kubectl get nodes   # should be Ready
+```
+
+---
+
+## 3. Spin‑up **Jenkins** + **SonarQube**
+
+### 3.1 Jenkins (Helm)
+
+```bash
+kubectl create namespace jenkins
+
+helm repo add jenkins https://charts.jenkins.io
+helm repo update
+
+helm upgrade --install jenkins jenkins/jenkins \
+  --namespace jenkins \
+  --set controller.adminUser=admin \
+  --set controller.adminPassword=admin \
+  --set controller.resources.requests.cpu="500m" \
+  --set controller.resources.requests.memory="1.5Gi" \
+  --set controller.resources.limits.memory="2Gi" \
+  --set persistence.enabled=true \
+  --set persistence.size=8Gi
+
+kubectl get pods -n jenkins                     # jenkins-0 2/2 Running
+kubectl port-forward svc/jenkins 8080:8080 -n jenkins
+```
+
+Log in to **<http://localhost:8080>** with the credentials above (or fetch the auto‑generated password):
+
+```bash
+kubectl exec -it svc/jenkins -c jenkins -n jenkins \
+  -- cat /run/secrets/additional/chart-admin-password
+```
+
+Finish the first‑run wizard → **Suggested plugins**.
+
+---
+
+### 3.2 SonarQube (YAML manifest)
+
+```bash
+kubectl apply -f kubernetes/sonarqube.yaml -n jenkins
+kubectl get pods -n jenkins            # sonarqube-xxxxx 1/1 Running
+minikube service sonarqube -n jenkins --url   # http://127.0.0.1:15108
+```
+
+Log in (admin / admin) and generate a **user token**  
+**My Account → Security → Generate Token** → copy & save.
+
+---
+
+## 4. Jenkins Global Configuration
+
+| Section | What to add |
+|---------|-------------|
+| **Manage Jenkins → Credentials** | • `github-token` – GitHub PAT (Secret Text)<br>• `dockerhub-creds` – Docker Hub user/pass (Username/Password)<br>• `sonarqube-token` – SonarQube token (Secret Text)<br>• `TELEGRAM_TOKEN` & `TELEGRAM_CHAT_ID` – credentials described in §5 |
+| **Configure System → SonarQube servers** | Name **sonarqube**, URL `http://sonarqube.jenkins.svc.cluster.local:9000`, Credentials **sonarqube-token** |
+| **Configure Global Security** | Disable anonymous read, fix inbound agent port 50000 (already chart default) |
+
+---
+
+## 5. Telegram Notification Channel
+
+1. **Create a bot**
+
+   ```
+   @BotFather →  /newbot
+   Bot name: Jenkins Notifier
+   Username: jenkinsciXXXXbot (must end with *bot*)
+   ```
+   Copy the **API token** – `8061677707:AA...`.
+
+2. **Get chat‑id**
+
+   ```
+   curl -s https://api.telegram.org/bot<API_TOKEN>/getUpdates
+   ```
+   After you send any message to the bot (e.g. `/start`), your chat id is in the JSON (`"chat":{"id":391880672,...}`).
+
+3. **Store in Jenkins**
+
+   *Credentials → (Kind: Secret text)*
+  - ID `TELEGRAM_TOKEN`  → *the bot token*
+  - ID `TELEGRAM_CHAT_ID` → *the numeric chat id*
+
+The Jenkinsfile (see next chapter) uses these IDs to `curl` the Bot API in **post** actions.
+
+---
+
+## 6. The Jenkinsfile (high‑level)
+
+```groovy
+stages {
+  Build          // npm ci inside docker/dockerfile.ci
+  Test           // jest
+  SonarQube      // sonar-scanner, waits for quality gate
+  Docker Build   // eval $(minikube docker-env) ; docker build
+  Docker Push    // docker login && docker push
+  Helm Deploy    // helm upgrade --install node-app  …
+  Verify         // curl http://node-hello-node-app.jenkins.svc.cluster.local
+}
+post {
+  success { notifyTG("✅ Jenkins pipeline succeeded …") }
+  failure { notifyTG("❌ Jenkins pipeline failed …")   }
+}
+```
+
+Key implementation details:
+
+| Piece | How it’s done |
+|-------|---------------|
+| **Build image** | Local Minikube Docker daemon → **instant** push‑less deploy /
+| **Manual ECR build** | Wrapped in `when { triggeredBy 'UserIdCause' }` so it never slows normal pushes |
+| **Verification** | `curl -s -o /dev/null -w "%{http_code}"` against the *ClusterIP* service; logs + pod list printed on failure |
+| **Notification** | `withCredentials([string(...)] ) { curl -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" -d chat_id=$TG_CHAT -d text="$MSG" }` |
+
+---
+
+## 7. Running the Pipeline
+
+1. **Create job** (`Pipeline script from SCM`, branch pattern `feat/task-6-*` or `*/*`, credentials `github-token`).
+2. Push any commit → Jenkins detects change → full build.
+3. **Manual promotion** – click **Build with Parameters** and select *Build & Push to ECR* when you need a prod image.
+
+Successful run output:
+
+```text
+…
+Verify Application ....................... ✔ 200 OK
+Finished: SUCCESS
+Sent notification → Telegram ✅
+```
+
+![telegram_screenshot](../../visual_assets/telegram_ok.png)
+
+---
+
+## 8. Clean‑up (optional)
+
+```bash
+helm uninstall jenkins -n jenkins
+kubectl delete -f kubernetes/sonarqube.yaml -n jenkins
+minikube delete
+```
+
+---
+
+## 9. What This Delivers
+
+| Criterion | ✔ Implementation |
+|-----------|------------------|
+| **Pipeline steps** | build, unit‑test, Sonar, Docker build/push, Helm deploy, smoke test |
+| **Artifacts** | `Dockerfile`, `Dockerfile.ci`, Helm chart, Docker Hub image |
+| **Verification** | Automated curl + HTTP 200 check |
+| **Notification** | Telegram bot messages for **SUCCESS / FAILURE** |
+| **Documentation** | This README 📝 |
+
