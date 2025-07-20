@@ -19,6 +19,17 @@ spec:
       image: sonarsource/sonar-scanner-cli:latest
       command: ["sh", "-c", "cat"]
       tty: true
+    - name: docker
+      image: docker:latest
+      command: ["sh", "-c", "cat"]
+      tty: true
+      volumeMounts:
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+  volumes:
+    - name: docker-sock
+      hostPath:
+        path: /var/run/docker.sock
 """
     }
   }
@@ -62,6 +73,26 @@ spec:
             withSonarQubeEnv('MySonarQube') {
               sh 'sonar-scanner -Dsonar.host.url=http://sonarqube.jenkins.svc.cluster.local:9000'
             }
+          }
+        }
+      }
+    }
+
+    stage('Docker Build (local Minikube)') {
+      when {
+        beforeAgent true
+        triggeredBy 'UserIdCause'
+      }
+      steps {
+        container('docker') {
+          dir('app') {
+            sh '''
+              echo "🔧 Switching to Minikube Docker..."
+              eval $(minikube docker-env)
+              echo "🐳 Building Docker image..."
+              docker build -t $IMAGE .
+              echo "✅ Docker image $IMAGE built in Minikube Docker daemon"
+            '''
           }
         }
       }
