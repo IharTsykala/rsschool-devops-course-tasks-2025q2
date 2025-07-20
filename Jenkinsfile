@@ -11,10 +11,14 @@ metadata:
     job: nodejs-build
 spec:
   containers:
-  - name: node
-    image: node:lts-alpine
-    command: ["sh", "-c", "cat"]
-    tty: true
+    - name: node
+      image: node:lts-alpine
+      command: ["sh", "-c", "cat"]
+      tty: true
+    - name: sonarscanner
+      image: sonarsource/sonar-scanner-cli:latest
+      command: ["sh", "-c", "cat"]
+      tty: true
 """
     }
   }
@@ -46,6 +50,18 @@ spec:
         container('node') {
           dir('app') {
             sh 'node --experimental-vm-modules node_modules/.bin/jest'
+          }
+        }
+      }
+    }
+
+    stage('SonarQube Analysis') {
+      steps {
+        container('sonarscanner') {
+          dir('app') {
+            withSonarQubeEnv('MySonarQube') {
+              sh 'sonar-scanner -Dsonar.host.url=http://sonarqube.jenkins.svc.cluster.local:9000'
+            }
           }
         }
       }
