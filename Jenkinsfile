@@ -20,7 +20,7 @@ spec:
       command: ["sh", "-c", "cat"]
       tty: true
     - name: docker
-      image: docker:latest
+      image: ihartsykala/docker-helm-minikube:latest
       command: ["sh", "-c", "cat"]
       tty: true
       volumeMounts:
@@ -119,6 +119,27 @@ spec:
         }
       }
     }
+
+     stage('Deploy to K8s with Helm') {
+          when {
+            beforeAgent true
+            triggeredBy 'UserIdCause'
+          }
+          steps {
+            container('docker') {
+              dir('app') {
+                sh """
+                  echo "🚀 Deploying with Helm..."
+                  helm upgrade --install node-hello ../kubernetes/node-app \
+                    --set image.repository=ihartsykala/node-hello \
+                    --set image.tag=${BUILD_NUMBER}
+                  echo "✅ Deployed node-hello to Kubernetes"
+                """
+              }
+            }
+          }
+        }
+
   }
 
   post {
