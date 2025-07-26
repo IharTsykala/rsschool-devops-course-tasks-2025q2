@@ -7,9 +7,10 @@ pipeline {
 apiVersion: v1
 kind: Pod
 spec:
+  serviceAccountName: jenkins
   containers:
     - name: tools
-      image: ihartsykala/docker-helm-minikube:latest
+      image: dtzar/helm-kubectl:3.14.4
       command: ["sh", "-c", "sleep 36000"]
       tty: true
 """
@@ -21,29 +22,74 @@ spec:
   options {
     disableConcurrentBuilds()
     buildDiscarder(logRotator(numToKeepStr: '10'))
-    // timestamps()
+  }
+
+  environment {
+    NAMESPACE = 'monitoring'
+    PROM_REL  = 'kube-prometheus'
   }
 
   stages {
-    stage('Checkout') {
-      steps { checkout scm }
-    }
+    stage('Checkout') { steps { checkout scm } }
 
-    stage('Sanity') {
+    stage('Helm repos') {
       steps {
         container('tools') {
-          sh '''
-            echo "✅ Pipeline skeleton is alive. Workspace: $PWD"
-            echo "Tools availability check (no cluster changes):"
-            helm version --short || true
-            kubectl version --client --short || true
-          '''
+          sh """
+            helm repo add bitnami https://charts.bitnami.com/bitnami
+            helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+            helm repo update
+          """
+        }
+      }
+    }
+
+    stage('Ensure namespace') {
+      steps {
+        container('tools') {
+          sh "kubectl get ns ${NAMESPACE} || kubectl create ns ${NAMESPACE}"
+        }
+      }
+    }
+
+    stage('RBAC Setup') {
+      steps {
+        container('tools') {
+          sh 'kubectl apply -f monitoring/rbac/jenkins-monitoring-access.yaml'
+        }
+      }
+    }
+
+    stage('Cluster RBAC Setup') {
+      steps {
+        container('tools') {
+          sh 'kubectl apply -f monitoring/rbac/jenkins-cluster-rbac.yaml'
+        }
+      }
+    }
+
+    stage('Install Prometheus') {
+      steps {
+        container('tools') {
+          sh """
+            helm upgrade --install ${PROM_REL} bitnami/kube-prometheus \
+              -n ${NAMESPACE} \
+              --create-namespace \
+              -f monitoring/prometheus/values.yaml \
+              --wait
+          """
+        }
+      }
+    }
+
+    stage('Status') {
+      steps {
+        container('tools') {
+          sh "kubectl get pods,svc -n ${NAMESPACE}"
         }
       }
     }
   }
 
-  post {
-    always { echo 'Done.' }
-  }
+  post { always { echo 'Done (Prometheus step).' } }
 }
