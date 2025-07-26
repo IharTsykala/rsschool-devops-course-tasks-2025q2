@@ -82,6 +82,20 @@ spec:
       }
     }
 
+    stage('Install Grafana') {
+      steps {
+        container('tools') {
+          sh """
+            helm upgrade --install grafana bitnami/grafana \
+              -n ${NAMESPACE} \
+              --create-namespace \
+              -f monitoring/grafana/values.yaml \
+              --wait
+          """
+        }
+      }
+    }
+
     stage('Status') {
       steps {
         container('tools') {
