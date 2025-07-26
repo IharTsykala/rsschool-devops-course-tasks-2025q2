@@ -82,6 +82,14 @@ spec:
       }
     }
 
+    stage('Create Grafana Admin Secret') {
+      steps {
+        container('tools') {
+          sh 'kubectl apply -f monitoring/grafana/grafana-secret.yaml'
+        }
+      }
+    }
+
     stage('Install Grafana') {
       steps {
         container('tools') {
