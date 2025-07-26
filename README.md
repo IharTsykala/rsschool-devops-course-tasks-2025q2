@@ -768,3 +768,4 @@ minikube delete
 | **Notification** | Telegram bot messages for **SUCCESS / FAILURE** |
 | **Documentation** | This README 📝 |
 
+# Task 7 – Prometheus Deployment on K8s (Local **Minikube** lab)
