@@ -2,27 +2,25 @@ controller:
   persistence:
     enabled: true
     size: 4Gi
-  JCasC:
-    enabled: false
+
+#  JCasC:
+#    enabled: true
 #    configScripts:
-#      hello-job: |
+#      prometheus-job: |
 #        jobs:
 #          - script: >
-#              pipelineJob('hello-world-pipeline') {
+#              pipelineJob('task-7-prometheus') {
 #                definition {
-#                  cps {
-#                    script(\"\"\"
-#                      pipeline {
-#                        agent any
-#                        stages {
-#                          stage('Hello') {
-#                            steps {
-#                              echo 'Hello world'
-#                            }
-#                          }
+#                  cpsScm {
+#                    scm {
+#                      git {
+#                        remote {
+#                          url('https://github.com/IharTsykala/rsschool-devops-course-tasks-2025q2.git')
 #                        }
+#                        branches('*/feat/task-7-prometheus-deployment-on-k8s')
 #                      }
-#                    \"\"\")
+#                    }
+#                    scriptPath('kubernetes/prometheus/Jenkinsfile')
 #                  }
 #                }
 #              }
