@@ -957,3 +957,181 @@ Run **Build Now** — should be **SUCCESS** (see the green `#3` build on the scr
     - **Poll SCM** (`H/2 * * * *`) — optional
     - **Pipeline script from SCM** + Repository URL + Branch + **Script Path** `monitoring/Jenkinsfile`
 - Job status page with **green build** (`#3` succeeded)
+
+
+## Prometheus & Grafana Monitoring Deployment via Jenkins Pipeline
+
+This section documents the complete implementation of monitoring deployment using Helm and Jenkins CI/CD.
+
+---
+
+## ✅ Overview
+
+This task includes:
+
+- Automated deployment of Prometheus and Grafana using Helm via Jenkins pipeline
+- Kubernetes RBAC setup
+- Exporter installation (via kube-prometheus stack)
+- Dashboard creation in Grafana
+- Secret for admin credentials
+- Exported JSON dashboard
+- Screenshots showing everything running
+
+---
+
+## 🔹 Jenkins Pipeline
+
+Jenkinsfile used for this task:
+
+```groovy
+pipeline {
+  agent {
+    kubernetes {
+      label 'monitoring'
+      defaultContainer 'tools'
+      yaml """
+apiVersion: v1
+kind: Pod
+spec:
+  serviceAccountName: jenkins
+  containers:
+    - name: tools
+      image: dtzar/helm-kubectl:3.14.4
+      command: ["sh", "-c", "sleep 36000"]
+      tty: true
+"""
+    }
+  }
+
+  triggers { pollSCM('H/2 * * * *') }
+
+  options {
+    disableConcurrentBuilds()
+    buildDiscarder(logRotator(numToKeepStr: '10'))
+  }
+
+  environment {
+    NAMESPACE = 'monitoring'
+    PROM_REL  = 'kube-prometheus'
+  }
+
+  stages {
+    stage('Checkout') { steps { checkout scm } }
+
+    stage('Helm repos') {
+      steps {
+        container('tools') {
+          sh """
+            helm repo add bitnami https://charts.bitnami.com/bitnami
+            helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+            helm repo update
+          """
+        }
+      }
+    }
+
+    stage('Ensure namespace') {
+      steps {
+        container('tools') {
+          sh "kubectl get ns ${NAMESPACE} || kubectl create ns ${NAMESPACE}"
+        }
+      }
+    }
+
+    stage('RBAC Setup') {
+      steps {
+        container('tools') {
+          sh 'kubectl apply -f monitoring/rbac/jenkins-monitoring-access.yaml'
+        }
+      }
+    }
+
+    stage('Cluster RBAC Setup') {
+      steps {
+        container('tools') {
+          sh 'kubectl apply -f monitoring/rbac/jenkins-cluster-rbac.yaml'
+        }
+      }
+    }
+
+    stage('Install Prometheus') {
+      steps {
+        container('tools') {
+          sh """
+            helm upgrade --install ${PROM_REL} bitnami/kube-prometheus \
+              -n ${NAMESPACE} \
+              --create-namespace \
+              -f monitoring/prometheus/values.yaml \
+              --wait
+          """
+        }
+      }
+    }
+
+    stage('Create Grafana Admin Secret') {
+      steps {
+        container('tools') {
+          sh 'kubectl apply -f monitoring/grafana/grafana-secret.yaml'
+        }
+      }
+    }
+
+    stage('Install Grafana') {
+      steps {
+        container('tools') {
+          sh """
+            helm upgrade --install grafana bitnami/grafana \
+              -n ${NAMESPACE} \
+              --create-namespace \
+              -f monitoring/grafana/values.yaml \
+              --wait
+          """
+        }
+      }
+    }
+
+    stage('Status') {
+      steps {
+        container('tools') {
+          sh "kubectl get pods,svc -n ${NAMESPACE}"
+        }
+      }
+    }
+  }
+
+  post { always { echo 'Done (Prometheus step).' } }
+}
+```
+
+---
+
+## 📌 Deliverables Summary
+
+| Requirement                                      | Status |
+|--------------------------------------------------|--------|
+| Prometheus and Grafana installed and running     | ✅     |
+| Jenkins pipeline for automation                  | ✅     |
+| Grafana Prometheus data source configured        | ✅     |
+| Grafana dashboard created                        | ✅     |
+| Admin secret via Kubernetes Secret               | ✅     |
+| Dashboard JSON exported                          | ✅     |
+
+---
+
+## 📁 Files and Structure
+
+```
+monitoring/
+├── Jenkinsfile
+├── grafana/
+│   ├── values.yaml
+│   └── grafana-secret.yaml
+├── prometheus/
+│   └── values.yaml
+├── dashboards/
+│   └── node-dashboard.json
+```
+
+📸 Screenshots are attached in the PR (e.g. Prometheus UI, Grafana dashboard, Data Source config, kubectl get all output).
+
+---
