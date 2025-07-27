@@ -768,33 +768,68 @@ minikube delete
 | **Notification** | Telegram bot messages for **SUCCESS / FAILURE** |
 | **Documentation** | This README 📝 |
 
-# Task 7 – Prometheus Deployment on K8s (Local **Minikube** lab)
 
-# ✅ Prerequisites & Jenkins Bootstrap
+# Task 7 – Prometheus & Grafana Monitoring via Jenkins Pipeline on **Minikube**
 
-> **Variant:** local lab on **Minikube** (no cloud costs).  
-> This document records what was done **before** installing Prometheus & Grafana: creating a clean Minikube cluster, installing Jenkins via Helm, and preparing a minimal Jenkins Pipeline job that succeeds.
-
----
-
-## ✅ What we have at the end of prerequisites
-
-- Minikube cluster running with **Docker** driver, `--cpus=4 --memory=6000`
-- Jenkins installed via **Helm** in namespace `jenkins`, accessed by **port‑forward**
-- New Jenkins **Pipeline** job `task-7-monitoring`, **Pipeline script from SCM**, branch set to our Task 7 branch, **Script Path** → `monitoring/Jenkinsfile`
-- The Pipeline is a **skeleton** (does nothing to the cluster yet) and **builds green**
-
-Screenshots confirming each step are attached in the PR (see the “Screenshots to include” section).
+> **Variant:** Local lab using **Minikube** (Docker driver).  
+> **Goal:** End‑to‑end CI/CD that deploys a monitoring stack (**Prometheus**, **Grafana**, exporters) and provisions **alerting** and **SMTP** **purely as code**. No GitHub Actions deployments are used here — **everything runs from Jenkins** (manually or via **Poll SCM/cron**).
 
 ---
 
-## 0) Local requirements
+## 0. Repository Structure (what comes from earlier tasks)
 
-- Docker Desktop (running)
-- Minikube, kubectl, Helm
-- macOS used in lab; commands are generic for Linux/WSL too
+```
+.
+├── .github/                     # (from Task 1) Terraform CI linting only – not used for deployment in Task 7
+├── app/                         # (from Task 5/6) Node.js demo application (+ tests)
+│   ├── Dockerfile               # Runtime image
+│   ├── docker/
+│   │   └── Dockerfile.ci        # CI image (build + unit tests + sonar)
+│   └── ...                      # Source and __tests__
+├── kubernetes/
+│   ├── jenkins/                 # (from Task 4) Wrapper-chart & values for local Jenkins on Minikube
+│   └── node-app/                # (from Task 5/6) Helm chart used by the app pipeline
+├── monitoring/                  # (Task 7) **Everything for Prometheus, Grafana, RBAC, SMTP and CI**
+│   ├── Jenkinsfile              # Final pipeline that deploys & provisions monitoring
+│   ├── grafana/
+│   │   ├── values.yaml          # Helm overrides (custom image, initContainer, NodePort, persistence, datasource, SMTP)
+│   │   ├── grafana-secret.yaml  # Admin creds (user/pass) as K8s Secret (mounted via values)
+│   │   ├── dashboards/
+│   │   │   └── node-metrics.json    # Example dashboard exported to JSON
+│   │   └── docker/                  # Source for the “all‑provisioned” Grafana image
+│   │       ├── Dockerfile           # Builds ihartsykala/grafana-alerting:latest
+│   │       └── provisioning/
+│   │           ├── alerting/
+│   │           │   ├── contact-points.yaml
+│   │           │   ├── notification-policies.yaml
+│   │           │   └── rule-groups.yaml
+│   │           ├── datasources/
+│   │           │   └── datasources.yaml
+│   │           ├── rules/           # reserved (not used in this lab)
+│   │           └── grafana.ini
+│   ├── prometheus/
+│   │   └── values.yaml          # Helm overrides for bitnami/kube-prometheus
+│   ├── rbac/
+│   │   ├── jenkins-monitoring-access.yaml  # ServiceAccount + Role/RoleBinding within the namespace
+│   │   └── jenkins-cluster-rbac.yaml       # ClusterRoleBinding (cluster-admin) for simplicity in the lab
+│   └── smtp4dev/
+│       └── smtp4dev.yaml        # Local SMTP server (mail‑catcher) for email alerts
+└── terraform/                   # (from Tasks 1–3) AWS IaC – not used in this local Minikube lab
+```
 
-Quick check:
+> **Important:** All **Task 7** files live under `monitoring/`. Jenkins for this lab was already bootstrapped in **Task 4** (Minikube + Helm). Application artifacts from **Task 5/6** stay in the repo but are unrelated to this deployment flow.
+
+---
+
+## 1. Prerequisites & Local Setup
+
+- **Docker Desktop** (running)
+- **Minikube** (Docker driver)
+- CLIs: `kubectl`, `helm`, `docker`, `git`
+- Branch: `feat/task-7-prometheus-deployment-on-k8s`
+
+Quick checks:
+
 ```bash
 docker --version
 minikube version
@@ -802,186 +837,74 @@ kubectl version --client --short
 helm version --short
 ```
 
----
+Start a clean Minikube and verify node state:
 
-## 1) Start a clean Minikube cluster
-
-Exactly the flags used in the screenshots:
 ```bash
 minikube start --cpus=4 --memory=6000 --driver=docker
-kubectl get nodes    # node Ready, Kubernetes v1.33.x
+kubectl get nodes
+# NAME       STATUS   ROLES           AGE   VERSION
+# minikube   Ready    control-plane   ...   v1.33.x
 ```
 
-Minikube enables the default `storage-provisioner` and `default-storageclass` addons automatically.
-
-> In a later step (when exposing Grafana) we will enable the `ingress` addon — **not needed yet** for the prerequisites.
+> Minikube auto‑enables `storage-provisioner` and `default-storageclass` add‑ons. Ingress is **not** required for this task; access is via `port-forward` or a NodePort for Grafana.
 
 ---
 
-## 2) Install Jenkins via Helm
+## 2. Jenkins on Minikube (Helm)
 
-Create the namespace and add chart repos:
+Add the repo, create namespace and install Jenkins:
+
 ```bash
-kubectl create namespace jenkins || true
-
 helm repo add jenkins https://charts.jenkins.io
 helm repo update
+kubectl create namespace jenkins || true
+
+helm upgrade --install jenkins jenkins/jenkins \
+  --namespace jenkins \
+  --set controller.resources.requests.memory=1Gi \
+  --set controller.resources.requests.cpu=500m \
+  --set persistence.enabled=true \
+  --set persistence.size=8Gi
 ```
 
-Install Jenkins (values match the console output on the screenshots):
-```bash
-helm upgrade --install jenkins jenkins/jenkins   --namespace jenkins   --set controller.resources.requests.memory=1Gi   --set controller.resources.requests.cpu=500m   --set persistence.enabled=true   --set persistence.size=8Gi
-```
+Wait for the controller:
 
-Wait for the controller to be ready:
 ```bash
 kubectl get pods -n jenkins
 # jenkins-0   2/2   Running
 ```
 
-Access the UI via port‑forward:
+Open the UI via port‑forward:
+
 ```bash
 kubectl -n jenkins port-forward svc/jenkins 8080:8080
-# open http://localhost:8080
+# http://localhost:8080
 ```
 
-Admin password (if auto-generated by the chart):
+Admin password (auto‑generated by the chart, if not overridden):
+
 ```bash
-kubectl exec -n jenkins -it svc/jenkins -c jenkins --   cat /run/secrets/additional/chart-admin-password
+kubectl exec -n jenkins -it svc/jenkins -c jenkins -- \
+  cat /run/secrets/additional/chart-admin-password
 ```
 
 ---
 
-## 3) Create a new Pipeline job `task-7-monitoring`
+## 3. Jenkins Job Configuration
 
-**New Item → Pipeline → OK**
+Create a Pipeline job **task-7-monitoring**:
 
-### Pipeline definition
-- **Definition:** `Pipeline script from SCM`
-- **SCM:** Git
-    - **Repository URL:** `https://github.com/IharTsykala/rsschool-devops-course-tasks-2025q2.git`
-    - **Credentials:** *(none, repo is public)*
-    - **Branches to build:** `*/feat/task-7-prometheus-deployment-on-k8s`
-    - **Script Path:** `monitoring/Jenkinsfile`  ← **important**
-- *(Optional)* **Lightweight checkout** can be enabled
+- **Definition:** *Pipeline script from SCM*
+- **Repository URL:** `https://github.com/IharTsykala/rsschool-devops-course-tasks-2025q2.git`
+- **Branches to build:** `*/feat/task-7-prometheus-deployment-on-k8s`
+- **Script Path:** `monitoring/Jenkinsfile`
+- **Triggers:** `Poll SCM: H/2 * * * *` (check every ~2 minutes)
 
-### Triggers (optional for convenience)
-```
-Poll SCM:  H/2 * * * *
-```
-This checks the branch for changes about every 2 minutes.
-
-**Save** the job.
+> In this lab **all deployments are triggered by Jenkins** (manual run or Poll SCM). GitHub Actions do not deploy the monitoring stack.
 
 ---
 
-## 4) Pipeline skeleton (just to ensure green build)
-
-We intentionally keep a **no‑op** Jenkinsfile that only checks tool availability.  
-_(No Helm installs, no cluster changes — Task 7 steps will be added later.)_
-
-**`monitoring/Jenkinsfile`**
-```groovy
-pipeline {
-  agent {
-    kubernetes {
-      label 'monitoring'
-      defaultContainer 'tools'
-      yaml \"\"\"
-apiVersion: v1
-kind: Pod
-spec:
-  containers:
-    - name: tools
-      image: ihartsykala/docker-helm-minikube:latest
-      command: ["sh", "-c", "sleep 36000"]
-      tty: true
-\"\"\"
-    }
-  }
-
-  // optional during development
-  triggers { pollSCM('H/2 * * * *') }
-
-  options {
-    disableConcurrentBuilds()
-    buildDiscarder(logRotator(numToKeepStr: '10'))
-  }
-
-  stages {
-    stage('Checkout') { steps { checkout scm } }
-
-    stage('Sanity') {
-      steps {
-        container('tools') {
-          sh '''
-            echo "✅ Pipeline skeleton is alive. Workspace: $PWD"
-            helm version --short || true
-            kubectl version --client --short || true
-          '''
-        }
-      }
-    }
-  }
-
-  post { always { echo 'Done.' } }
-}
-```
-
-Run **Build Now** — should be **SUCCESS** (see the green `#3` build on the screenshot).
-
----
-
-## 5) Troubleshooting we hit (and fixed)
-
-- **Old Task 6 pipeline ran by mistake** (Node/Sonar stages, Docker/Telegram credentials):
-    - Symptoms: `No such DSL method 'withSonarQubeEnv'`, missing `TELEGRAM_TOKEN`.
-    - Fix: In the job config set **Script Path** to `monitoring/Jenkinsfile` and commit the new minimal Jenkinsfile.
-
-- **`Invalid option type "timestamps"`** at first try:
-    - Reason: Timestamper plugin is not installed.
-    - Fix: removed `timestamps()` from `options {}` (or install the plugin).
-
-- **Kubernetes plugin message** “label option is deprecated”:
-    - Informational; safe to ignore for this lab.
-
----
-
-## 6) Screenshots to include in the PR (prerequisites part)
-
-- Minikube start output (with `--cpus=4 --memory=6000 --driver=docker`) and `kubectl get nodes`
-- Helm: repo add/update, `kubectl create namespace jenkins`, Helm install output for `jenkins/jenkins`
-- `kubectl get pods -n jenkins` → `jenkins-0 2/2 Running`
-- Port‑forward and Jenkins UI at `http://localhost:8080`
-- Job configuration pages:
-    - **Poll SCM** (`H/2 * * * *`) — optional
-    - **Pipeline script from SCM** + Repository URL + Branch + **Script Path** `monitoring/Jenkinsfile`
-- Job status page with **green build** (`#3` succeeded)
-
-
-## Prometheus & Grafana Monitoring Deployment via Jenkins Pipeline
-
-This section documents the complete implementation of monitoring deployment using Helm and Jenkins CI/CD.
-
----
-
-## ✅ Overview
-
-This task includes:
-
-- Automated deployment of Prometheus and Grafana using Helm via Jenkins pipeline
-- Kubernetes RBAC setup
-- Exporter installation (via kube-prometheus stack)
-- Dashboard creation in Grafana
-- Secret for admin credentials
-- Exported JSON dashboard
-- Screenshots showing everything running
-
----
-
-## 🔹 Jenkins Pipeline
-
-Jenkinsfile used for this task:
+## 4. Final Jenkinsfile (used in this task)
 
 ```groovy
 pipeline {
@@ -1038,7 +961,7 @@ spec:
       }
     }
 
-    stage('RBAC Setup') {
+    stage('RBAC Setup (namespace)') {
       steps {
         container('tools') {
           sh 'kubectl apply -f monitoring/rbac/jenkins-monitoring-access.yaml'
@@ -1046,7 +969,7 @@ spec:
       }
     }
 
-    stage('Cluster RBAC Setup') {
+    stage('RBAC Setup (cluster)') {
       steps {
         container('tools') {
           sh 'kubectl apply -f monitoring/rbac/jenkins-cluster-rbac.yaml'
@@ -1068,6 +991,14 @@ spec:
       }
     }
 
+    stage('Provision SMTP (smtp4dev)') {
+      steps {
+        container('tools') {
+          sh "kubectl apply -f monitoring/smtp4dev/smtp4dev.yaml -n ${NAMESPACE}"
+        }
+      }
+    }
+
     stage('Create Grafana Admin Secret') {
       steps {
         container('tools') {
@@ -1076,7 +1007,7 @@ spec:
       }
     }
 
-    stage('Install Grafana') {
+    stage('Install Grafana (prebuilt provisioning)') {
       steps {
         container('tools') {
           sh """
@@ -1105,117 +1036,199 @@ spec:
 
 ---
 
-## 📌 Deliverables Summary
+## 5. RBAC (service account + bindings)
 
-| Requirement                                      | Status |
-|--------------------------------------------------|--------|
-| Prometheus and Grafana installed and running     | ✅     |
-| Jenkins pipeline for automation                  | ✅     |
-| Grafana Prometheus data source configured        | ✅     |
-| Grafana dashboard created                        | ✅     |
-| Admin secret via Kubernetes Secret               | ✅     |
-| Dashboard JSON exported                          | ✅     |
+Namespace‑level access for job Pods and a cluster‑admin binding for simplicity in the lab (avoid in prod).
 
----
-
-## 📁 Files and Structure
-
-```
-monitoring/
-├── Jenkinsfile
-├── grafana/
-│   ├── values.yaml
-│   └── grafana-secret.yaml
-├── prometheus/
-│   └── values.yaml
-├── dashboards/
-│   └── node-dashboard.json
-```
-
-📸 Screenshots are attached in the PR (e.g. Prometheus UI, Grafana dashboard, Data Source config, kubectl get all output).
-
----
-
-## Monitoring & Alerting (Grafana + Prometheus)
-
-> **Variant:** local lab on **Minikube** (no cloud costs)
-
-This section documents how monitoring **alerts** and **email notifications** are provisioned **entirely via code** (Helm values + Kubernetes manifests), and how to verify them by stressing the cluster.
-
----
-
-## ✅ What We Implement
-
-- SMTP server for local dev (**smtp4dev**) and SMTP configuration in Grafana.
-- **Contact point** that sends emails to `test@localhost`.
-- **Notification policy** that routes all alerts to the contact point.
-- Two **alert rules** (Prometheus datasource):
-    - **High CPU Usage** on any node.
-    - **Lack of RAM capacity** on any node.
-- **Provisioning** via ConfigMaps and **mounted into Grafana**, so configuration **survives pod restarts**.
-- Jenkins pipeline applies all manifests automatically.
-
----
-
-## 1) SMTP Server (local)
-
-For local development we use **smtp4dev** (pod + service in the `monitoring` namespace). UI is available on port **80** of the `smtp4dev` service; SMTP listens on **25**.
-
-**`monitoring/smtp4dev/smtp4dev.yaml`** (already in the repo):
+**`monitoring/rbac/jenkins-monitoring-access.yaml`** (excerpt):
 
 ```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: smtp4dev
-  namespace: monitoring
-spec:
-  replicas: 1
-  selector:
-    matchLabels: { app: smtp4dev }
-  template:
-    metadata:
-      labels: { app: smtp4dev }
-    spec:
-      containers:
-        - name: smtp4dev
-          image: rnwood/smtp4dev:3.7.0
-          ports:
-            - containerPort: 25   # SMTP
-            - containerPort: 80   # Web UI
----
 apiVersion: v1
-kind: Service
+kind: ServiceAccount
 metadata:
-  name: smtp4dev
+  name: jenkins
   namespace: monitoring
-spec:
-  selector:
-    app: smtp4dev
-  ports:
-    - name: smtp
-      port: 25
-      targetPort: 25
-    - name: http
-      port: 80
-      targetPort: 80
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jenkins-namespace-admin
+  namespace: monitoring
+rules:
+  - apiGroups: ["", "apps", "batch", "extensions"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-namespace-admin-binding
+  namespace: monitoring
+subjects:
+  - kind: ServiceAccount
+    name: jenkins
+    namespace: monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: jenkins-namespace-admin
 ```
 
-Apply (Jenkins does this too):
+**`monitoring/rbac/jenkins-cluster-rbac.yaml`** (excerpt):
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: jenkins-monitoring-admin-binding
+subjects:
+  - kind: ServiceAccount
+    name: jenkins
+    namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+```
+
+Apply (Jenkins does this automatically; manual check if needed):
+
+```bash
+kubectl apply -f monitoring/rbac/jenkins-monitoring-access.yaml
+kubectl apply -f monitoring/rbac/jenkins-cluster-rbac.yaml
+```
+
+---
+
+## 6. Prometheus (kube‑prometheus)
+
+Install via Helm (Bitnami chart) with exporters:
+
+```bash
+helm upgrade --install kube-prometheus bitnami/kube-prometheus \
+  -n monitoring --create-namespace \
+  -f monitoring/prometheus/values.yaml --wait
+```
+
+Check resources:
+
+```bash
+kubectl get pods -n monitoring
+kubectl get svc -n monitoring
+```
+
+Optional: open Prometheus UI
+
+```bash
+kubectl -n monitoring port-forward svc/kube-prometheus-prometheus 9090:9090
+# http://localhost:9090
+```
+
+Try example queries:
+
+- `node_memory_MemTotal_bytes`
+- `node_memory_MemAvailable_bytes`
+- `node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes`
+
+---
+
+## 7. SMTP for alerts (smtp4dev)
+
+Deploy the local SMTP server and open its Web UI:
 
 ```bash
 kubectl apply -f monitoring/smtp4dev/smtp4dev.yaml -n monitoring
+kubectl -n monitoring port-forward svc/smtp4dev 8025:80
+# http://localhost:8025  (inbox)
 ```
+
+`smtp4dev` exposes SMTP on port **25** and a Web UI on port **80**.
 
 ---
 
-## 2) Configure SMTP in Grafana (Helm values)
+## 8. Grafana (provisioned as code)
 
-SMTP is configured **via code** in the chart values. Local setup needs only `host:port` and `skip_verify`.
+### 8.1 Custom Docker image (contains provisioning)
 
-**`monitoring/grafana/values.yaml` (excerpt):**
+**`monitoring/grafana/docker/Dockerfile`**
+
+```dockerfile
+FROM bitnami/grafana:12.1.0
+
+USER root
+
+COPY provisioning/alerting/ /opt/extra-provisioning/alerting/
+COPY provisioning/rules/ /opt/extra-provisioning/rules/
+COPY provisioning/datasources/ /opt/extra-provisioning/datasources/
+COPY provisioning/grafana.ini /opt/extra-provisioning/grafana.ini
+
+RUN mkdir -p /opt/bitnami/grafana/conf/provisioning/alerting \
+    && mkdir -p /opt/bitnami/grafana/conf/provisioning/rules \
+    && mkdir -p /opt/bitnami/grafana/conf/provisioning/datasources \
+    && ln -sfn /opt/extra-provisioning/alerting/contact-points.yaml /opt/bitnami/grafana/conf/provisioning/alerting/contact-points.yaml \
+    && ln -sfn /opt/extra-provisioning/alerting/notification-policies.yaml /opt/bitnami/grafana/conf/provisioning/alerting/notification-policies.yaml \
+    && ln -sfn /opt/extra-provisioning/alerting/rule-groups.yaml /opt/bitnami/grafana/conf/provisioning/alerting/rule-groups.yaml \
+    && ln -sfn /opt/extra-provisioning/datasources/datasources.yaml /opt/bitnami/grafana/conf/provisioning/datasources/datasources.yaml \
+    && ln -sfn /opt/extra-provisioning/grafana.ini /opt/bitnami/grafana/conf/grafana.ini \
+    && chown -R 1001:1001 /opt/extra-provisioning
+
+USER 1001
+```
+
+Build & push (can be done once; Jenkins uses the image):
+
+```bash
+docker build -t ihartsykala/grafana-alerting:latest monitoring/grafana/docker
+docker push ihartsykala/grafana-alerting:latest
+```
+
+### 8.2 Helm values with initContainer
+
+**`monitoring/grafana/values.yaml` (final)**
 
 ```yaml
+image:
+  registry: docker.io
+  repository: ihartsykala/grafana-alerting
+  tag: latest
+  pullPolicy: Always
+
+global:
+  security:
+    allowInsecureImages: true
+
+grafana:
+  imageRenderer:
+    enabled: false
+
+  # Copy provisioning files from the custom image to a writable EmptyDir,
+  # then mount it into Grafana's official provisioning paths
+  initContainers:
+    - name: copy-provisioning
+      image: ihartsykala/grafana-alerting:latest
+      command: [ "/bin/sh", "-c" ]
+      args:
+        - |
+          mkdir -p /provisioning/alerting /provisioning/rules /provisioning/datasources && \
+          cp -r /opt/extra-provisioning/alerting/* /provisioning/alerting/ && \
+          cp -r /opt/extra-provisioning/rules/* /provisioning/rules/ && \
+          cp -r /opt/extra-provisioning/datasources/* /provisioning/datasources/ && \
+          cp /opt/extra-provisioning/grafana.ini /provisioning/grafana.ini
+      volumeMounts:
+        - name: provisioning
+          mountPath: /provisioning
+
+  extraVolumes:
+    - name: provisioning
+      emptyDir: {}
+
+  extraVolumeMounts:
+    - name: provisioning
+      mountPath: /opt/bitnami/grafana/conf/provisioning
+    - name: provisioning
+      mountPath: /opt/bitnami/grafana/conf/grafana.ini
+      subPath: grafana.ini
+
 admin:
   existingSecret: grafana-secret
   userKey: user
@@ -1228,38 +1241,246 @@ service:
 
 persistence:
   enabled: true
-  size: 2Gi
-
-grafana.ini:
-  smtp:
-    enabled: true
-    host: smtp4dev.monitoring.svc.cluster.local:25
-    from_address: test@localhost
-    from_name: Grafana Alerts
-    skip_verify: true
-
-smtp:
-  enabled: true
-  host: smtp4dev.monitoring.svc.cluster.local:25
-  skipVerify: true
-  from_address: test@localhost
-  from_name: Grafana Alerts
-
-datasources:
-  datasources.yaml:
-    apiVersion: 1
-    datasources:
-      - name: Prometheus
-        uid: prometheus
-        type: prometheus
-        url: http://kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
-        access: proxy
-        isDefault: true
+  size: 1Gi
 ```
 
-Admin credentials are provided via secret:
+### 8.3 SMTP, datasource & INI (provisioning files)
 
-**`monitoring/grafana/grafana-secret.yaml`**:
+**`monitoring/grafana/docker/provisioning/grafana.ini` (excerpt):**
+
+```ini
+[smtp]
+enabled = true
+host = smtp4dev.monitoring.svc.cluster.local:25
+skip_verify = true
+from_address = test@localhost
+from_name = Grafana Alerts
+```
+
+**`monitoring/grafana/docker/provisioning/datasources/datasources.yaml`:**
+
+```yaml
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
+    isDefault: true
+```
+
+**`monitoring/grafana/docker/provisioning/alerting/contact-points.yaml`:**
+
+```yaml
+apiVersion: 1
+contactPoints:
+  - orgId: 1
+    name: TestEmail
+    receivers:
+      - uid: testemail-receiver
+        type: email
+        disableResolveMessage: false
+        settings:
+          addresses: test@localhost
+          singleEmail: false
+```
+
+**`monitoring/grafana/docker/provisioning/alerting/notification-policies.yaml`:**
+
+```yaml
+apiVersion: 1
+policies:
+  - orgId: 1
+    receiver: TestEmail
+    group_by: [alertname]
+    continue: false
+```
+
+**`monitoring/grafana/docker/provisioning/alerting/rule-groups.yaml` (two rules):**
+
+```yaml
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: Every 10s
+    folder: ClusterAlerts
+    interval: 10s
+    rules:
+      - uid: high-cpu-usage
+        title: High CPU Usage
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[1m])) * 100)
+              instant: true
+              range: false
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [80], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { type: last }
+                  type: query
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Error
+        for: 10s
+        keepFiringFor: 10s
+        isPaused: false
+        notification_settings: { receiver: TestEmail }
+
+      - uid: lack-of-ram
+        title: Lack of RAM capacity
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: 100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))
+              instant: true
+              range: false
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [80], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { type: last }
+                  type: query
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Error
+        for: 10s
+        keepFiringFor: 10s
+        isPaused: false
+        notification_settings: { receiver: TestEmail }
+```
+
+### 8.4 Admin secret & install
+
+Create the admin secret (Jenkins also applies it):
+
+```bash
+kubectl apply -n monitoring -f monitoring/grafana/grafana-secret.yaml
+```
+
+Deploy Grafana with the values above:
+
+```bash
+helm upgrade --install grafana bitnami/grafana \
+  -n monitoring --create-namespace \
+  -f monitoring/grafana/values.yaml --wait
+```
+
+Access the UI:
+
+```bash
+# Option 1: port-forward
+kubectl -n monitoring port-forward svc/grafana 3000:3000
+# http://localhost:3000
+
+# Option 2: NodePort (configured to 32000)
+# http://NODE-IP:32000
+```
+
+Login: `admin` / `<password from grafana-secret.yaml>` (example: `securePassword123`).
+
+---
+
+## 9. Validation
+
+### 9.1 Pods and services
+
+```bash
+kubectl get pods -n monitoring
+kubectl get svc -n monitoring
+```
+
+### 9.2 Sample Prometheus queries
+
+Open Prometheus (port‑forward 9090) and run:
+
+- `node_memory_MemAvailable_bytes`
+- `node_memory_MemTotal_bytes`
+- `100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))`
+
+### 9.3 Trigger alerts
+
+Run CPU and RAM stress pods to trigger rules:
+
+```bash
+kubectl run cpu-stress --rm -i --tty \
+  --image=progrium/stress -- \
+  stress --cpu 4 --timeout 300
+
+kubectl run mem-stress --rm -i --tty \
+  --image=progrium/stress -- \
+  stress --vm 1 --vm-bytes 512M --timeout 300
+```
+
+Watch Grafana: *Alerting → Alert rules* should go **FIRING**, then **RESOLVED**.
+
+### 9.4 Check e‑mail notifications
+
+Open smtp4dev UI:
+
+```bash
+kubectl -n monitoring port-forward svc/smtp4dev 8025:80
+# http://localhost:8025
+```
+
+You should see messages like:
+
+- `[FIRING:1] High CPU Usage ...`
+- `[FIRING:1] Lack of RAM capacity ...`
+- `[RESOLVED] ...`
+
+---
+
+## 10. Troubleshooting Notes
+
+- **Pipeline ran a wrong Jenkinsfile** (from Task 6): set **Script Path** to `monitoring/Jenkinsfile`.
+- **`Invalid option type "timestamps"`**: remove `timestamps()` or install the Timestamper plugin.
+- **Kubernetes plugin “label is deprecated”**: informational for this lab.
+- **No e‑mails**: check `grafana.ini` SMTP host, smtp4dev service DNS, and that `smtp4dev` pod is running.
+- **Grafana didn’t load provisioning**: ensure the `initContainer` completed and `extraVolumeMounts` point to `/opt/bitnami/grafana/conf/provisioning`.
+- **Prometheus unreachable**: verify service name `kube-prometheus-prometheus` and namespace.
+- **NodePort 32000 busy**: change `service.nodePort` in `values.yaml` or use `port-forward`.
+
+---
+
+## 11. What this delivers
+
+- ✅ Prometheus + exporters installed via Helm (`bitnami/kube-prometheus`)
+- ✅ Grafana installed via Helm, **preconfigured** by a custom image + `initContainer`
+- ✅ SMTP (smtp4dev) for local alert e‑mail testing
+- ✅ Contact Points, Notification Policy, and **two alert rules** provisioned as YAML
+- ✅ Jenkins **only** deployment flow (manual run / `Poll SCM`)
+- ✅ Dashboard JSON included and persistence enabled
+
+---
+
+## 12. Appendix
+
+### 12.1 Grafana admin secret (example)
+
+`monitoring/grafana/grafana-secret.yaml`
 
 ```yaml
 apiVersion: v1
@@ -1273,263 +1494,46 @@ stringData:
   password: securePassword123
 ```
 
----
+### 12.2 Prometheus values
 
-## 3) Contact Points & Notification Policies (provisioning)
-
-We provision contact points and policies through a **ConfigMap** that is mounted into Grafana’s provisioning path.
-
-**`monitoring/grafana/provisioning/alerting/configmap.yaml`**:
+`monitoring/prometheus/values.yaml` – minimal overrides (use defaults unless you need custom retention/resources).
 
 ```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: grafana-alerting-provisioning
-  namespace: monitoring
-data:
-  contact-points.yaml: |
-    apiVersion: 1
-    contactPoints:
-      - orgId: 1
-        name: TestEmail
-        receivers:
-          - uid: testemail-receiver
-            type: email
-            disableResolveMessage: false
-            settings:
-              addresses: test@localhost
-              singleEmail: false
-              subject: |
-                {{ template "default.title" . }}
-              message: |
-                {{ template "default.message" . }}
+kubeStateMetrics:
+  enabled: true
 
-  notification-policies.yaml: |
-    apiVersion: 1
-    policies:
-      - orgId: 1
-        receiver: TestEmail
-        group_by: [alertname]
-        continue: false
-        routes: []
+nodeExporter:
+  enabled: true
+
+alertmanager:
+  enabled: true
+
+prometheus:
+  retention: 15d
 ```
 
-Mount this ConfigMap in Grafana via **values.yaml**:
+### 12.3 Dashboard JSON
 
-```yaml
-extraVolumes:
-  - name: alerting-provisioning
-    configMap:
-      name: grafana-alerting-provisioning
+`monitoring/grafana/dashboards/node-metrics.json` – can be imported in Grafana (Data source UID: `prometheus`).
 
-extraVolumeMounts:
-  - name: alerting-provisioning
-    mountPath: /opt/bitnami/grafana/conf/provisioning/alerting
-    readOnly: true
-```
-
----
-
-## 4) Alert Rules (provisioning)
-
-The same ConfigMap contains a separate file that defines **rule groups**. We provide two alert rules.
-
-**PromQL used**
-- **CPU usage** (percent):
-  ```promql
-  100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[1m])) * 100)
-  ```
-- **RAM usage** (percent):
-  ```promql
-  100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))
-  ```
-
-**`rule-groups.yaml`** content inside the same ConfigMap:
-
-```yaml
-  rule-groups.yaml: |
-    apiVersion: 1
-    groups:
-      - orgId: 1
-        name: Every 10s
-        folder: ClusterAlerts
-        interval: 10s
-        rules:
-          - uid: eet5lag8kuyv4b
-            title: High CPU Usage
-            condition: C
-            data:
-              - refId: A
-                relativeTimeRange: { from: 600, to: 0 }
-                datasourceUid: prometheus
-                model:
-                  editorMode: code
-                  expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[1m])) * 100)
-                  instant: true
-                  intervalMs: 1000
-                  legendFormat: __auto
-                  maxDataPoints: 43200
-                  range: false
-                  refId: A
-              - refId: C
-                datasourceUid: __expr__
-                model:
-                  conditions:
-                    - evaluator: { params: [80], type: gt }
-                      operator: { type: and }
-                      query: { params: [C] }
-                      reducer: { params: [], type: last }
-                      type: query
-                  datasource: { type: __expr__, uid: __expr__ }
-                  expression: A
-                  intervalMs: 1000
-                  maxDataPoints: 43200
-                  refId: C
-                  type: threshold
-            noDataState: NoData
-            execErrState: Error
-            for: 10s
-            keepFiringFor: 10s
-            isPaused: false
-            notification_settings:
-              receiver: TestEmail
-
-          - uid: fet5lfe2sm3nkd
-            title: Lack of RAM capacity
-            condition: C
-            data:
-              - refId: A
-                relativeTimeRange: { from: 600, to: 0 }
-                datasourceUid: prometheus
-                model:
-                  editorMode: code
-                  expr: 100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))
-                  instant: true
-                  intervalMs: 1000
-                  legendFormat: __auto
-                  maxDataPoints: 43200
-                  range: false
-                  refId: A
-              - refId: C
-                datasourceUid: __expr__
-                model:
-                  conditions:
-                    - evaluator: { params: [80], type: gt }
-                      operator: { type: and }
-                      query: { params: [C] }
-                      reducer: { params: [], type: last }
-                      type: query
-                  datasource: { type: __expr__, uid: __expr__ }
-                  expression: A
-                  intervalMs: 1000
-                  maxDataPoints: 43200
-                  refId: C
-                  type: threshold
-            noDataState: NoData
-            execErrState: Error
-            for: 10s
-            keepFiringFor: 10s
-            isPaused: false
-            notification_settings:
-              receiver: TestEmail
-```
-
-Apply the ConfigMap:
+### 12.4 Useful one‑liners
 
 ```bash
-kubectl apply -f monitoring/grafana/provisioning/alerting/configmap.yaml
+# All resources in the namespace
+kubectl get all -n monitoring
+
+# Logs from Grafana
+kubectl logs -n monitoring deploy/grafana
+
+# Reinstall Grafana cleanly (for dev/testing)
+helm uninstall grafana -n monitoring
+kubectl delete pod -n monitoring -l app.kubernetes.io/name=grafana --force --grace-period=0
 helm upgrade --install grafana bitnami/grafana -n monitoring -f monitoring/grafana/values.yaml --wait
 ```
 
-> The provisioning folder is mounted into `/opt/bitnami/grafana/conf/provisioning/alerting`, so the rules and contact points are loaded automatically on start and **persist** across restarts.
+**Everything above is reproducible with:**
+1. Start Minikube → Install Jenkins via Helm → Configure job (`Poll SCM`)
+2. Run the job → RBAC → kube‑prometheus → smtp4dev → Grafana (with provisioning)
+3. Validate in Prometheus/Grafana, trigger alerts, confirm e‑mails in smtp4dev
 
----
-
-## 5) Verify Emails (Alert delivery)
-
-Open smtp4dev UI (port-forward if needed):
-
-```bash
-kubectl port-forward -n monitoring svc/smtp4dev 8025:80
-# http://localhost:8025
-```
-
-Trigger load to create **FIRING** alerts.
-
-### CPU stress (runs a one-shot pod and exits automatically)
-
-```bash
-kubectl run cpu-stress --rm -i --tty \
-  --image=progrium/stress \
-  -- \
-  stress --cpu 4 --timeout 300
-```
-
-### Memory stress (adjust bytes to your node size)
-
-```bash
-kubectl run mem-stress --rm -i --tty \
-  --image=progrium/stress \
-  -- \
-  stress --vm 1 --vm-bytes 512M --timeout 300
-```
-
-You should see two e-mails in smtp4dev UI:
-
-- `[FIRING:1] High CPU Usage …`
-- `[FIRING:1] Lack of RAM capacity …`
-
-Both are routed via **TestEmail** contact point to `test@localhost`.
-
----
-
-## 6) Dashboards
-
-A simple Node metrics dashboard JSON is included and can be imported in Grafana:
-
-- File: `monitoring/grafana/dashboards/node-metrics.json` (already in repo).
-- Data source: **Prometheus** (uid: `prometheus`).
-
----
-
-## 7) CI/CD (Jenkins)
-
-Jenkins pipeline `monitoring/Jenkinsfile` performs:
-
-1. Helm repos add/update.
-2. Ensure `monitoring` namespace.
-3. RBAC for Jenkins.
-4. Install/upgrade **kube-prometheus** (Prometheus, exporters).
-5. Apply **grafana-secret**.
-6. Install/upgrade **Grafana** with **values.yaml** (SMTP, datasource, volumes).
-7. Apply **alerting ConfigMap**.
-8. Status dump (`kubectl get pods,svc -n monitoring`).
-
----
-
-## 8) What to Include in PR (screenshots)
-
-- **Alert Rules list**: `High CPU Usage`, `Lack of RAM capacity` (both **firing** and **normal** states).
-- **Contact Points** screen (shows **TestEmail**).
-- **Notification Policies** screen (routes to TestEmail).
-- **Received emails** in smtp4dev UI (subjects starting with `[FIRING:1] …`).
-
----
-
-## 9) Notes for AWS (SES)
-
-If you later switch to **Amazon SES** instead of `smtp4dev`:
-
-- Update `grafana.ini.smtp.host` to the SES endpoint and add auth parameters.
-- Set `from_address` to a **verified** address in SES.
-- Add credentials via Kubernetes Secret and reference them in the Helm values (e.g. `GF_SMTP_USER_FILE`, `GF_SMTP_PASSWORD_FILE`).
-
----
-
-## 10) TL;DR
-
-- Everything is provisioned **as code** (Helm values + ConfigMaps).
-- Alerts are routed to email automatically.
-- Verification is done by **stressing CPU/RAM** with short‑lived pods.
-- Configuration persists across Grafana restarts.
+**Deployment is 100% code‑driven and idempotent.**
