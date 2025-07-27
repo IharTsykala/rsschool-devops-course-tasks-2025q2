@@ -90,6 +90,14 @@ spec:
       }
     }
 
+    stage('Grafana Alerting Provisioning') {
+      steps {
+        container('tools') {
+          sh 'kubectl apply -f monitoring/grafana/provisioning/grafana-alerting-provisioning.cm.yaml -n monitoring'
+        }
+      }
+    }
+
     stage('Install Grafana') {
       steps {
         container('tools') {
