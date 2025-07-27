@@ -32,7 +32,18 @@ datasources:
     apiVersion: 1
     datasources:
       - name: Prometheus
+        uid: prometheus
         type: prometheus
         url: http://kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
         access: proxy
         isDefault: true
+
+extraVolumes:
+  - name: alerting-provisioning
+    configMap:
+      name: grafana-alerting-provisioning
+
+extraVolumeMounts:
+  - name: alerting-provisioning
+    mountPath: /opt/bitnami/grafana/conf/provisioning/alerting
+    readOnly: true
