@@ -104,6 +104,14 @@ spec:
       }
     }
 
+    stage('Provision SMTP Server') {
+      steps {
+        container('tools') {
+          sh 'kubectl apply -f monitoring/smtp4dev/smtp4dev.yaml -n monitoring'
+        }
+      }
+    }
+
     stage('Status') {
       steps {
         container('tools') {

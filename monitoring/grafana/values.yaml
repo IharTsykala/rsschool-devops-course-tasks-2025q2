@@ -10,6 +10,13 @@ service:
 persistence:
   enabled: false
 
+grafana.ini:
+  smtp:
+    enabled: true
+    host: smtp4dev.monitoring.svc.cluster.local:25
+    skip_verify: true
+    from_address: alerts@grafana.local
+
 datasources:
   datasources.yaml:
     apiVersion: 1
