@@ -39,11 +39,26 @@ datasources:
         isDefault: true
 
 extraVolumes:
-  - name: alerting-provisioning
+  - name: contact-points
     configMap:
-      name: grafana-alerting-provisioning
+      name: contact-points
+  - name: grafana-policies
+    configMap:
+      name: grafana-policies
+  - name: grafana-rules
+    configMap:
+      name: grafana-rules
 
 extraVolumeMounts:
-  - name: alerting-provisioning
-    mountPath: /opt/bitnami/grafana/conf/provisioning/alerting
+  - name: contact-points
+    mountPath: /opt/bitnami/grafana/conf/provisioning/alerting/contact-points.yaml
+    subPath: contact-points.yaml
+    readOnly: true
+  - name: grafana-policies
+    mountPath: /opt/bitnami/grafana/conf/provisioning/alerting/notification-policies.yaml
+    subPath: notification-policies.yaml
+    readOnly: true
+  - name: grafana-rules
+    mountPath: /opt/bitnami/grafana/conf/provisioning/rules/rule-groups.yaml
+    subPath: rule-groups.yaml
     readOnly: true

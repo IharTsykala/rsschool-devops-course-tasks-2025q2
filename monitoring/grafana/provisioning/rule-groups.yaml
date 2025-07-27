@@ -1,35 +1,9 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: grafana-alerting-provisioning
+  name: grafana-rules
   namespace: monitoring
 data:
-  contact-points.yaml: |
-    apiVersion: 1
-    contactPoints:
-      - orgId: 1
-        name: TestEmail
-        receivers:
-          - uid: testemail-receiver
-            type: email
-            disableResolveMessage: false
-            settings:
-              addresses: test@localhost
-              singleEmail: false
-              subject: |
-                {{ template "default.title" . }}
-              message: |
-                {{ template "default.message" . }}
-
-  notification-policies.yaml: |
-    apiVersion: 1
-    policies:
-      - orgId: 1
-        receiver: TestEmail
-        group_by: [alertname]
-        continue: false
-        routes: []
-
   rule-groups.yaml: |
     apiVersion: 1
     groups:
@@ -61,14 +35,14 @@ data:
                 model:
                   conditions:
                     - evaluator:
-                        params: [80]
+                        params: [ 80 ]
                         type: gt
                       operator:
                         type: and
                       query:
-                        params: [C]
+                        params: [ C ]
                       reducer:
-                        params: []
+                        params: [ ]
                         type: last
                       type: query
                   datasource:
@@ -86,6 +60,7 @@ data:
             isPaused: false
             notification_settings:
               receiver: TestEmail
+          
           - uid: fet5lfe2sm3nkd
             title: Lack of RAM capacity
             condition: C
@@ -109,14 +84,14 @@ data:
                 model:
                   conditions:
                     - evaluator:
-                        params: [80]
+                        params: [ 80 ]
                         type: gt
                       operator:
                         type: and
                       query:
-                        params: [C]
+                        params: [ C ]
                       reducer:
-                        params: []
+                        params: [ ]
                         type: last
                       type: query
                   datasource:

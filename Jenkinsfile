@@ -93,7 +93,11 @@ spec:
     stage('Grafana Alerting Provisioning') {
       steps {
         container('tools') {
-          sh 'kubectl apply -f monitoring/grafana/provisioning/grafana-alerting-provisioning.cm.yaml -n monitoring'
+          sh """
+            kubectl apply -f monitoring/grafana/provisioning/contact-points.yaml -n ${NAMESPACE}
+            kubectl apply -f monitoring/grafana/provisioning/notification-policies.yaml -n ${NAMESPACE}
+            kubectl apply -f monitoring/grafana/provisioning/rule-groups.yaml -n ${NAMESPACE}
+          """
         }
       }
     }
@@ -115,7 +119,7 @@ spec:
     stage('Provision SMTP Server') {
       steps {
         container('tools') {
-          sh 'kubectl apply -f monitoring/smtp4dev/smtp4dev.yaml -n monitoring'
+          sh "kubectl apply -f monitoring/smtp4dev/smtp4dev.yaml -n ${NAMESPACE}"
         }
       }
     }
