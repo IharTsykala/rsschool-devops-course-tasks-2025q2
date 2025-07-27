@@ -1,3 +1,48 @@
+image:
+  registry: docker.io
+  repository: ihartsykala/grafana-alerting
+  tag: latest
+  pullPolicy: Always
+
+global:
+  security:
+    allowInsecureImages: true
+
+grafana:
+  imageRenderer:
+    enabled: false
+
+  dashboardsConfigMaps: []
+  notifiers: []
+  extraConfigmaps: []
+  extraSecretMounts: []
+
+  initContainers:
+    - name: copy-provisioning
+      image: ihartsykala/grafana-alerting:latest
+      command: [ "/bin/sh", "-c" ]
+      args:
+        - |
+          mkdir -p /provisioning/alerting /provisioning/rules /provisioning/datasources && \
+          cp -r /opt/extra-provisioning/alerting/* /provisioning/alerting/ && \
+          cp -r /opt/extra-provisioning/rules/* /provisioning/rules/ && \
+          cp -r /opt/extra-provisioning/datasources/* /provisioning/datasources/ && \
+          cp /opt/extra-provisioning/grafana.ini /provisioning/grafana.ini
+      volumeMounts:
+        - name: provisioning
+          mountPath: /provisioning
+
+  extraVolumeMounts:
+    - name: provisioning
+      mountPath: /opt/bitnami/grafana/conf/provisioning
+    - name: provisioning
+      mountPath: /opt/bitnami/grafana/conf/grafana.ini
+      subPath: grafana.ini
+
+  extraVolumes:
+    - name: provisioning
+      emptyDir: {}
+
 admin:
   existingSecret: grafana-secret
   userKey: user
@@ -10,55 +55,4 @@ service:
 
 persistence:
   enabled: true
-  size: 2Gi
-
-grafana.ini:
-  smtp:
-    enabled: true
-    host: smtp4dev.monitoring.svc.cluster.local:25
-    from_address: test@localhost
-    from_name: Grafana Alerts
-    skip_verify: true
-
-smtp:
-  enabled: true
-  host: smtp4dev.monitoring.svc.cluster.local:25
-  skipVerify: true
-  from_address: test@localhost
-  from_name: Grafana Alerts
-
-datasources:
-  datasources.yaml:
-    apiVersion: 1
-    datasources:
-      - name: Prometheus
-        uid: prometheus
-        type: prometheus
-        url: http://kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
-        access: proxy
-        isDefault: true
-
-extraVolumes:
-  - name: contact-points
-    configMap:
-      name: contact-points
-  - name: grafana-policies
-    configMap:
-      name: grafana-policies
-  - name: grafana-rules
-    configMap:
-      name: grafana-rules
-
-extraVolumeMounts:
-  - name: contact-points
-    mountPath: /opt/bitnami/grafana/conf/provisioning/alerting/contact-points.yaml
-    subPath: contact-points.yaml
-    readOnly: true
-  - name: grafana-policies
-    mountPath: /opt/bitnami/grafana/conf/provisioning/alerting/notification-policies.yaml
-    subPath: notification-policies.yaml
-    readOnly: true
-  - name: grafana-rules
-    mountPath: /opt/bitnami/grafana/conf/provisioning/rules/rule-groups.yaml
-    subPath: rule-groups.yaml
-    readOnly: true
+  size: 1Gi

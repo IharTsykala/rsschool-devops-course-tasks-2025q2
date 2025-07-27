@@ -82,6 +82,14 @@ spec:
       }
     }
 
+    stage('Provision SMTP Server') {
+      steps {
+        container('tools') {
+          sh "kubectl apply -f monitoring/smtp4dev/smtp4dev.yaml -n ${NAMESPACE}"
+        }
+      }
+    }
+
     stage('Create Grafana Admin Secret') {
       steps {
         container('tools') {
@@ -90,19 +98,7 @@ spec:
       }
     }
 
-    stage('Grafana Alerting Provisioning') {
-      steps {
-        container('tools') {
-          sh """
-            kubectl apply -f monitoring/grafana/provisioning/contact-points.yaml -n ${NAMESPACE}
-            kubectl apply -f monitoring/grafana/provisioning/notification-policies.yaml -n ${NAMESPACE}
-            kubectl apply -f monitoring/grafana/provisioning/rule-groups.yaml -n ${NAMESPACE}
-          """
-        }
-      }
-    }
-
-    stage('Install Grafana') {
+    stage('Install Grafana (with prebuilt provisioning from Docker)') {
       steps {
         container('tools') {
           sh """
@@ -112,14 +108,6 @@ spec:
               -f monitoring/grafana/values.yaml \
               --wait
           """
-        }
-      }
-    }
-
-    stage('Provision SMTP Server') {
-      steps {
-        container('tools') {
-          sh "kubectl apply -f monitoring/smtp4dev/smtp4dev.yaml -n ${NAMESPACE}"
         }
       }
     }
