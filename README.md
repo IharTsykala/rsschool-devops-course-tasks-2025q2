@@ -1135,3 +1135,401 @@ monitoring/
 📸 Screenshots are attached in the PR (e.g. Prometheus UI, Grafana dashboard, Data Source config, kubectl get all output).
 
 ---
+
+## Monitoring & Alerting (Grafana + Prometheus)
+
+> **Variant:** local lab on **Minikube** (no cloud costs)
+
+This section documents how monitoring **alerts** and **email notifications** are provisioned **entirely via code** (Helm values + Kubernetes manifests), and how to verify them by stressing the cluster.
+
+---
+
+## ✅ What We Implement
+
+- SMTP server for local dev (**smtp4dev**) and SMTP configuration in Grafana.
+- **Contact point** that sends emails to `test@localhost`.
+- **Notification policy** that routes all alerts to the contact point.
+- Two **alert rules** (Prometheus datasource):
+    - **High CPU Usage** on any node.
+    - **Lack of RAM capacity** on any node.
+- **Provisioning** via ConfigMaps and **mounted into Grafana**, so configuration **survives pod restarts**.
+- Jenkins pipeline applies all manifests automatically.
+
+---
+
+## 1) SMTP Server (local)
+
+For local development we use **smtp4dev** (pod + service in the `monitoring` namespace). UI is available on port **80** of the `smtp4dev` service; SMTP listens on **25**.
+
+**`monitoring/smtp4dev/smtp4dev.yaml`** (already in the repo):
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smtp4dev
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: smtp4dev }
+  template:
+    metadata:
+      labels: { app: smtp4dev }
+    spec:
+      containers:
+        - name: smtp4dev
+          image: rnwood/smtp4dev:3.7.0
+          ports:
+            - containerPort: 25   # SMTP
+            - containerPort: 80   # Web UI
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: smtp4dev
+  namespace: monitoring
+spec:
+  selector:
+    app: smtp4dev
+  ports:
+    - name: smtp
+      port: 25
+      targetPort: 25
+    - name: http
+      port: 80
+      targetPort: 80
+```
+
+Apply (Jenkins does this too):
+
+```bash
+kubectl apply -f monitoring/smtp4dev/smtp4dev.yaml -n monitoring
+```
+
+---
+
+## 2) Configure SMTP in Grafana (Helm values)
+
+SMTP is configured **via code** in the chart values. Local setup needs only `host:port` and `skip_verify`.
+
+**`monitoring/grafana/values.yaml` (excerpt):**
+
+```yaml
+admin:
+  existingSecret: grafana-secret
+  userKey: user
+  passwordKey: password
+
+service:
+  type: NodePort
+  port: 3000
+  nodePort: 32000
+
+persistence:
+  enabled: true
+  size: 2Gi
+
+grafana.ini:
+  smtp:
+    enabled: true
+    host: smtp4dev.monitoring.svc.cluster.local:25
+    from_address: test@localhost
+    from_name: Grafana Alerts
+    skip_verify: true
+
+smtp:
+  enabled: true
+  host: smtp4dev.monitoring.svc.cluster.local:25
+  skipVerify: true
+  from_address: test@localhost
+  from_name: Grafana Alerts
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        url: http://kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
+        access: proxy
+        isDefault: true
+```
+
+Admin credentials are provided via secret:
+
+**`monitoring/grafana/grafana-secret.yaml`**:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana-secret
+  namespace: monitoring
+type: Opaque
+stringData:
+  user: admin
+  password: securePassword123
+```
+
+---
+
+## 3) Contact Points & Notification Policies (provisioning)
+
+We provision contact points and policies through a **ConfigMap** that is mounted into Grafana’s provisioning path.
+
+**`monitoring/grafana/provisioning/alerting/configmap.yaml`**:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-alerting-provisioning
+  namespace: monitoring
+data:
+  contact-points.yaml: |
+    apiVersion: 1
+    contactPoints:
+      - orgId: 1
+        name: TestEmail
+        receivers:
+          - uid: testemail-receiver
+            type: email
+            disableResolveMessage: false
+            settings:
+              addresses: test@localhost
+              singleEmail: false
+              subject: |
+                {{ template "default.title" . }}
+              message: |
+                {{ template "default.message" . }}
+
+  notification-policies.yaml: |
+    apiVersion: 1
+    policies:
+      - orgId: 1
+        receiver: TestEmail
+        group_by: [alertname]
+        continue: false
+        routes: []
+```
+
+Mount this ConfigMap in Grafana via **values.yaml**:
+
+```yaml
+extraVolumes:
+  - name: alerting-provisioning
+    configMap:
+      name: grafana-alerting-provisioning
+
+extraVolumeMounts:
+  - name: alerting-provisioning
+    mountPath: /opt/bitnami/grafana/conf/provisioning/alerting
+    readOnly: true
+```
+
+---
+
+## 4) Alert Rules (provisioning)
+
+The same ConfigMap contains a separate file that defines **rule groups**. We provide two alert rules.
+
+**PromQL used**
+- **CPU usage** (percent):
+  ```promql
+  100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[1m])) * 100)
+  ```
+- **RAM usage** (percent):
+  ```promql
+  100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))
+  ```
+
+**`rule-groups.yaml`** content inside the same ConfigMap:
+
+```yaml
+  rule-groups.yaml: |
+    apiVersion: 1
+    groups:
+      - orgId: 1
+        name: Every 10s
+        folder: ClusterAlerts
+        interval: 10s
+        rules:
+          - uid: eet5lag8kuyv4b
+            title: High CPU Usage
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: { from: 600, to: 0 }
+                datasourceUid: prometheus
+                model:
+                  editorMode: code
+                  expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[1m])) * 100)
+                  instant: true
+                  intervalMs: 1000
+                  legendFormat: __auto
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator: { params: [80], type: gt }
+                      operator: { type: and }
+                      query: { params: [C] }
+                      reducer: { params: [], type: last }
+                      type: query
+                  datasource: { type: __expr__, uid: __expr__ }
+                  expression: A
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  refId: C
+                  type: threshold
+            noDataState: NoData
+            execErrState: Error
+            for: 10s
+            keepFiringFor: 10s
+            isPaused: false
+            notification_settings:
+              receiver: TestEmail
+
+          - uid: fet5lfe2sm3nkd
+            title: Lack of RAM capacity
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: { from: 600, to: 0 }
+                datasourceUid: prometheus
+                model:
+                  editorMode: code
+                  expr: 100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))
+                  instant: true
+                  intervalMs: 1000
+                  legendFormat: __auto
+                  maxDataPoints: 43200
+                  range: false
+                  refId: A
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  conditions:
+                    - evaluator: { params: [80], type: gt }
+                      operator: { type: and }
+                      query: { params: [C] }
+                      reducer: { params: [], type: last }
+                      type: query
+                  datasource: { type: __expr__, uid: __expr__ }
+                  expression: A
+                  intervalMs: 1000
+                  maxDataPoints: 43200
+                  refId: C
+                  type: threshold
+            noDataState: NoData
+            execErrState: Error
+            for: 10s
+            keepFiringFor: 10s
+            isPaused: false
+            notification_settings:
+              receiver: TestEmail
+```
+
+Apply the ConfigMap:
+
+```bash
+kubectl apply -f monitoring/grafana/provisioning/alerting/configmap.yaml
+helm upgrade --install grafana bitnami/grafana -n monitoring -f monitoring/grafana/values.yaml --wait
+```
+
+> The provisioning folder is mounted into `/opt/bitnami/grafana/conf/provisioning/alerting`, so the rules and contact points are loaded automatically on start and **persist** across restarts.
+
+---
+
+## 5) Verify Emails (Alert delivery)
+
+Open smtp4dev UI (port-forward if needed):
+
+```bash
+kubectl port-forward -n monitoring svc/smtp4dev 8025:80
+# http://localhost:8025
+```
+
+Trigger load to create **FIRING** alerts.
+
+### CPU stress (runs a one-shot pod and exits automatically)
+
+```bash
+kubectl run cpu-stress --rm -i --tty \
+  --image=progrium/stress \
+  -- \
+  stress --cpu 4 --timeout 300
+```
+
+### Memory stress (adjust bytes to your node size)
+
+```bash
+kubectl run mem-stress --rm -i --tty \
+  --image=progrium/stress \
+  -- \
+  stress --vm 1 --vm-bytes 512M --timeout 300
+```
+
+You should see two e-mails in smtp4dev UI:
+
+- `[FIRING:1] High CPU Usage …`
+- `[FIRING:1] Lack of RAM capacity …`
+
+Both are routed via **TestEmail** contact point to `test@localhost`.
+
+---
+
+## 6) Dashboards
+
+A simple Node metrics dashboard JSON is included and can be imported in Grafana:
+
+- File: `monitoring/grafana/dashboards/node-metrics.json` (already in repo).
+- Data source: **Prometheus** (uid: `prometheus`).
+
+---
+
+## 7) CI/CD (Jenkins)
+
+Jenkins pipeline `monitoring/Jenkinsfile` performs:
+
+1. Helm repos add/update.
+2. Ensure `monitoring` namespace.
+3. RBAC for Jenkins.
+4. Install/upgrade **kube-prometheus** (Prometheus, exporters).
+5. Apply **grafana-secret**.
+6. Install/upgrade **Grafana** with **values.yaml** (SMTP, datasource, volumes).
+7. Apply **alerting ConfigMap**.
+8. Status dump (`kubectl get pods,svc -n monitoring`).
+
+---
+
+## 8) What to Include in PR (screenshots)
+
+- **Alert Rules list**: `High CPU Usage`, `Lack of RAM capacity` (both **firing** and **normal** states).
+- **Contact Points** screen (shows **TestEmail**).
+- **Notification Policies** screen (routes to TestEmail).
+- **Received emails** in smtp4dev UI (subjects starting with `[FIRING:1] …`).
+
+---
+
+## 9) Notes for AWS (SES)
+
+If you later switch to **Amazon SES** instead of `smtp4dev`:
+
+- Update `grafana.ini.smtp.host` to the SES endpoint and add auth parameters.
+- Set `from_address` to a **verified** address in SES.
+- Add credentials via Kubernetes Secret and reference them in the Helm values (e.g. `GF_SMTP_USER_FILE`, `GF_SMTP_PASSWORD_FILE`).
+
+---
+
+## 10) TL;DR
+
+- Everything is provisioned **as code** (Helm values + ConfigMaps).
+- Alerts are routed to email automatically.
+- Verification is done by **stressing CPU/RAM** with short‑lived pods.
+- Configuration persists across Grafana restarts.
