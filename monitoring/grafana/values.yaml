@@ -1,6 +1,7 @@
 admin:
-  user: admin
-  password: admin
+  existingSecret: grafana-secret
+  userKey: user
+  passwordKey: password
 
 service:
   type: NodePort
@@ -8,14 +9,23 @@ service:
   nodePort: 32000
 
 persistence:
-  enabled: false
+  enabled: true
+  size: 2Gi
 
 grafana.ini:
   smtp:
     enabled: true
     host: smtp4dev.monitoring.svc.cluster.local:25
+    from_address: test@localhost
+    from_name: Grafana Alerts
     skip_verify: true
-    from_address: alerts@grafana.local
+
+smtp:
+  enabled: true
+  host: smtp4dev.monitoring.svc.cluster.local:25
+  skipVerify: true
+  from_address: test@localhost
+  from_name: Grafana Alerts
 
 datasources:
   datasources.yaml:
