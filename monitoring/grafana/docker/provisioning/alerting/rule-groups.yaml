@@ -1,0 +1,76 @@
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: node_alerts
+    folder: ClusterAlerts
+    interval: 30s
+    rules:
+      - uid: high-cpu-usage
+        title: High CPU Usage
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[1m])) * 100)
+              instant: true
+              range: false
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [80], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { type: last, params: [] }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              type: threshold
+              refId: C
+        noDataState: NoData
+        execErrState: Error
+        for: 10s
+        keepFiringFor: 10s
+        labels: { severity: warning }
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is above 80% on one of the nodes"
+
+      - uid: high-memory-usage
+        title: High Memory Usage
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100
+              instant: true
+              range: false
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [85], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { type: last, params: [] }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              type: threshold
+              refId: C
+        noDataState: NoData
+        execErrState: Error
+        for: 10s
+        keepFiringFor: 10s
+        labels: { severity: warning }
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is above 85% on one of the nodes"

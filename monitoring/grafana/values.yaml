@@ -1,0 +1,58 @@
+image:
+  registry: docker.io
+  repository: ihartsykala/grafana-alerting
+  tag: latest
+  pullPolicy: Always
+
+global:
+  security:
+    allowInsecureImages: true
+
+grafana:
+  imageRenderer:
+    enabled: false
+
+  dashboardsConfigMaps: []
+  notifiers: []
+  extraConfigmaps: []
+  extraSecretMounts: []
+
+  initContainers:
+    - name: copy-provisioning
+      image: ihartsykala/grafana-alerting:latest
+      command: [ "/bin/sh", "-c" ]
+      args:
+        - |
+          mkdir -p /provisioning/alerting /provisioning/rules /provisioning/datasources && \
+          cp -r /opt/extra-provisioning/alerting/* /provisioning/alerting/ && \
+          cp -r /opt/extra-provisioning/rules/* /provisioning/rules/ && \
+          cp -r /opt/extra-provisioning/datasources/* /provisioning/datasources/ && \
+          cp /opt/extra-provisioning/grafana.ini /provisioning/grafana.ini
+      volumeMounts:
+        - name: provisioning
+          mountPath: /provisioning
+
+  extraVolumeMounts:
+    - name: provisioning
+      mountPath: /opt/bitnami/grafana/conf/provisioning
+    - name: provisioning
+      mountPath: /opt/bitnami/grafana/conf/grafana.ini
+      subPath: grafana.ini
+
+  extraVolumes:
+    - name: provisioning
+      emptyDir: {}
+
+admin:
+  existingSecret: grafana-secret
+  userKey: user
+  passwordKey: password
+
+service:
+  type: NodePort
+  port: 3000
+  nodePort: 32000
+
+persistence:
+  enabled: true
+  size: 1Gi
